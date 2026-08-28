@@ -1,19 +1,25 @@
 package com.myroboot.support.controller;
 
 import com.myroboot.support.service.AuthService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "*")
 public class SupportController {
+    private static final Logger log = LoggerFactory.getLogger(SupportController.class);
 
     private final JdbcTemplate jdbcTemplate;
     private final AuthService authService;
@@ -63,12 +69,15 @@ public class SupportController {
     }
 
     @PostMapping("/ticket")
+    @Transactional
     public Map<String, Object> createTicket(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestBody Map<String, Object> body) {
         AuthService.Session session = requireUser(authorization);
         String category = required(body, "category", "请选择或填写问题类型");
         String description = required(body, "description", "请填写问题描述后再提交");
+        if (category.length() > 100) throw new IllegalArgumentException("问题类型不能超过 100 个字符");
+        if (description.length() > 20000) throw new IllegalArgumentException("问题描述过长，请精简后再提交，详细内容可放在附件中");
         String customerName = valueOr(body.get("customerName"), session.companyName());
         String mineName = valueOr(body.get("mineName"), session.mineName());
         jdbcTemplate.update(
@@ -76,7 +85,13 @@ public class SupportController {
                 session.userId(), customerName, mineName, category, description, body.get("screenshotUrl")
         );
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        if (id == null) throw new IllegalStateException("工单创建失败");
         saveTicketAttachments(id, body.get("attachments"));
+        jdbcTemplate.update(
+                "INSERT INTO ticket_history(ticket_id,operator_user_id,operator_name,action_type,content,visible_to_customer) VALUES (?,?,?,?,?,1)",
+                id, session.userId(), operatorName(session), "created", "客户已提交技术支持工单"
+        );
+        log.info("TICKET_CREATED ticketId={} userId={} category={}", id, session.userId(), category);
         return Map.of("success", true, "ticketId", id);
     }
 
@@ -100,11 +115,12 @@ public class SupportController {
     }
 
     @PutMapping("/admin/tickets/{id}/status")
+    @Transactional
     public Map<String, Object> updateTicketStatus(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @PathVariable Long id,
             @RequestBody Map<String, Object> body) {
-        requireAdmin(authorization);
+        AuthService.Session admin = requireAdmin(authorization);
         String status = String.valueOf(body.getOrDefault("status", "")).trim();
         if (!List.of("pending", "processing", "resolved").contains(status)) throw new IllegalArgumentException("不支持的工单状态");
         if ("resolved".equals(status)) {
@@ -114,9 +130,27 @@ public class SupportController {
                     "UPDATE support_ticket SET status='resolved', resolution_reason=?, resolution_result=?, resolved_time=NOW() WHERE id=?",
                     reason, result, id
             );
+            if (updated > 0) {
+                jdbcTemplate.update(
+                        "INSERT INTO ticket_history(ticket_id,operator_user_id,operator_name,action_type,content,visible_to_customer) VALUES (?,?,?,?,?,1)",
+                        id, admin.userId(), operatorName(admin), "resolved", "问题原因：" + reason + "\n处理回执：" + result
+                );
+                log.info("TICKET_RESOLVED ticketId={} operatorUserId={}", id, admin.userId());
+            }
             return Map.of("success", updated > 0);
         }
-        int updated = jdbcTemplate.update("UPDATE support_ticket SET status=?, resolved_time=NULL WHERE id=?", status, id);
+        int updated = jdbcTemplate.update(
+                "UPDATE support_ticket SET status=?, resolution_reason=NULL, resolution_result=NULL, resolved_time=NULL WHERE id=?",
+                status, id
+        );
+        if (updated > 0) {
+            String content = "processing".equals(status) ? "技术人员已开始处理" : "工单状态已调整为待处理";
+            jdbcTemplate.update(
+                    "INSERT INTO ticket_history(ticket_id,operator_user_id,operator_name,action_type,content,visible_to_customer) VALUES (?,?,?,?,?,1)",
+                    id, admin.userId(), operatorName(admin), "progress", content
+            );
+            log.info("TICKET_STATUS_CHANGED ticketId={} status={} operatorUserId={}", id, status, admin.userId());
+        }
         return Map.of("success", updated > 0);
     }
 
@@ -129,45 +163,55 @@ public class SupportController {
     }
 
     @PostMapping("/admin/faqs")
+    @Transactional
     public Map<String, Object> createFaq(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestBody Map<String, Object> body) {
-        requireAdmin(authorization);
+        AuthService.Session admin = requireAdmin(authorization);
         String category = required(body, "category", "分类不能为空");
         String question = required(body, "question", "问题标题不能为空");
         String answer = required(body, "answer", "解决方案不能为空");
+        validateFaqLengths(category, question, answer, body.get("keywords"));
         jdbcTemplate.update("INSERT INTO faq(category, question, answer, keywords, enabled) VALUES (?, ?, ?, ?, ?)",
                 category, question, answer, body.get("keywords"), asEnabled(body.get("enabled")));
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        if (id == null) throw new IllegalStateException("问题库保存失败");
         replaceFaqImages(id, body.get("images"));
         replaceFaqAttachments(id, body.get("attachments"));
+        log.info("FAQ_CREATED faqId={} operatorUserId={}", id, admin.userId());
         return Map.of("success", true, "id", id);
     }
 
     @PutMapping("/admin/faqs/{id}")
+    @Transactional
     public Map<String, Object> updateFaq(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @PathVariable Long id,
             @RequestBody Map<String, Object> body) {
-        requireAdmin(authorization);
+        AuthService.Session admin = requireAdmin(authorization);
         String category = required(body, "category", "分类不能为空");
         String question = required(body, "question", "问题标题不能为空");
         String answer = required(body, "answer", "解决方案不能为空");
+        validateFaqLengths(category, question, answer, body.get("keywords"));
         int updated = jdbcTemplate.update("UPDATE faq SET category=?, question=?, answer=?, keywords=?, enabled=? WHERE id=?",
                 category, question, answer, body.get("keywords"), asEnabled(body.get("enabled")), id);
+        if (updated == 0) throw new IllegalArgumentException("问题不存在或已被删除");
         replaceFaqImages(id, body.get("images"));
         replaceFaqAttachments(id, body.get("attachments"));
-        return Map.of("success", updated > 0);
+        log.info("FAQ_UPDATED faqId={} operatorUserId={}", id, admin.userId());
+        return Map.of("success", true);
     }
 
     @DeleteMapping("/admin/faqs/{id}")
+    @Transactional
     public Map<String, Object> deleteFaq(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @PathVariable Long id) {
-        requireAdmin(authorization);
+        AuthService.Session admin = requireAdmin(authorization);
         jdbcTemplate.update("DELETE FROM faq_image WHERE faq_id=?", id);
         jdbcTemplate.update("DELETE FROM faq_attachment WHERE faq_id=?", id);
         int updated = jdbcTemplate.update("DELETE FROM faq WHERE id=?", id);
+        if (updated > 0) log.info("FAQ_DELETED faqId={} operatorUserId={}", id, admin.userId());
         return Map.of("success", updated > 0);
     }
 
@@ -179,7 +223,8 @@ public class SupportController {
                             "FROM faq WHERE enabled=1 AND (MATCH(category,question,answer,keywords) AGAINST (? IN NATURAL LANGUAGE MODE) > 0 OR category LIKE ? OR question LIKE ? OR answer LIKE ? OR keywords LIKE ?) " +
                             "ORDER BY relevance DESC, CASE WHEN question LIKE ? THEN 0 ELSE 1 END, id DESC LIMIT ?",
                     keyword, keyword, like, like, like, like, like, limit);
-        } catch (Exception ignored) {
+        } catch (DataAccessException e) {
+            log.debug("FAQ full-text query unavailable; using LIKE fallback: {}", e.getMostSpecificCause().getMessage());
             return jdbcTemplate.queryForList(
                     "SELECT id,category,question,answer,keywords FROM faq WHERE enabled=1 AND (category LIKE ? OR question LIKE ? OR answer LIKE ? OR keywords LIKE ?) ORDER BY CASE WHEN question LIKE ? THEN 0 ELSE 1 END,id DESC LIMIT ?",
                     like, like, like, like, like, limit);
@@ -187,20 +232,50 @@ public class SupportController {
     }
 
     private List<Map<String, Object>> enrichFaqResources(List<Map<String, Object>> rows) {
+        if (rows.isEmpty()) return rows;
+        List<Long> ids = rows.stream().map(row -> ((Number) row.get("id")).longValue()).toList();
+        String placeholders = placeholders(ids.size());
+        Object[] args = ids.toArray();
+
+        Map<Long, List<String>> imagesByFaq = new HashMap<>();
+        List<Map<String, Object>> imageRows = jdbcTemplate.queryForList(
+                "SELECT faq_id,image_url FROM faq_image WHERE faq_id IN (" + placeholders + ") ORDER BY faq_id,sort_no,id", args);
+        for (Map<String, Object> image : imageRows) {
+            Long faqId = ((Number) image.get("faq_id")).longValue();
+            imagesByFaq.computeIfAbsent(faqId, ignored -> new ArrayList<>()).add(String.valueOf(image.get("image_url")));
+        }
+
+        Map<Long, List<Map<String, Object>>> attachmentsByFaq = new HashMap<>();
+        List<Map<String, Object>> attachmentRows = jdbcTemplate.queryForList(
+                "SELECT id,faq_id,file_url,original_name,content_type,file_size,create_time FROM faq_attachment WHERE faq_id IN (" + placeholders + ") ORDER BY faq_id,sort_no,id", args);
+        for (Map<String, Object> attachment : attachmentRows) {
+            Long faqId = ((Number) attachment.get("faq_id")).longValue();
+            attachmentsByFaq.computeIfAbsent(faqId, ignored -> new ArrayList<>()).add(attachment);
+        }
+
         for (Map<String, Object> row : rows) {
-            Long id = ((Number) row.get("id")).longValue();
-            row.put("images", jdbcTemplate.queryForList("SELECT image_url FROM faq_image WHERE faq_id=? ORDER BY sort_no,id", String.class, id));
-            row.put("attachments", jdbcTemplate.queryForList(
-                    "SELECT id,file_url,original_name,content_type,file_size,create_time FROM faq_attachment WHERE faq_id=? ORDER BY sort_no,id", id));
+            Long faqId = ((Number) row.get("id")).longValue();
+            row.put("images", imagesByFaq.getOrDefault(faqId, List.of()));
+            row.put("attachments", attachmentsByFaq.getOrDefault(faqId, List.of()));
         }
         return rows;
     }
 
     private List<Map<String, Object>> enrichTicketAttachments(List<Map<String, Object>> rows) {
+        if (rows.isEmpty()) return rows;
+        List<Long> ids = rows.stream().map(row -> ((Number) row.get("id")).longValue()).toList();
+        String placeholders = placeholders(ids.size());
+        Object[] args = ids.toArray();
+        Map<Long, List<Map<String, Object>>> attachmentsByTicket = new HashMap<>();
+        List<Map<String, Object>> attachmentRows = jdbcTemplate.queryForList(
+                "SELECT id,ticket_id,file_url,original_name,content_type,file_size,create_time FROM ticket_attachment WHERE ticket_id IN (" + placeholders + ") ORDER BY ticket_id,id", args);
+        for (Map<String, Object> attachment : attachmentRows) {
+            Long ticketId = ((Number) attachment.get("ticket_id")).longValue();
+            attachmentsByTicket.computeIfAbsent(ticketId, ignored -> new ArrayList<>()).add(attachment);
+        }
         for (Map<String, Object> row : rows) {
             Long ticketId = ((Number) row.get("id")).longValue();
-            row.put("attachments", jdbcTemplate.queryForList(
-                    "SELECT id,file_url,original_name,content_type,file_size,create_time FROM ticket_attachment WHERE ticket_id=? ORDER BY id", ticketId));
+            row.put("attachments", attachmentsByTicket.getOrDefault(ticketId, List.of()));
         }
         return rows;
     }
@@ -254,13 +329,29 @@ public class SupportController {
         }
     }
 
+    private void validateFaqLengths(String category, String question, String answer, Object keywords) {
+        if (category.length() > 100) throw new IllegalArgumentException("分类不能超过 100 个字符");
+        if (question.length() > 500) throw new IllegalArgumentException("问题标题不能超过 500 个字符");
+        if (answer.length() > 200000) throw new IllegalArgumentException("解决方案内容过长，请将大段资料改为附件上传");
+        String keywordText = text(keywords);
+        if (keywordText.length() > 1000) throw new IllegalArgumentException("搜索关键词不能超过 1000 个字符");
+    }
+
+    private String placeholders(int count) {
+        return String.join(",", Collections.nCopies(count, "?"));
+    }
+
+    private String operatorName(AuthService.Session session) {
+        return session.displayName() == null || session.displayName().isBlank() ? session.username() : session.displayName();
+    }
+
     private AuthService.Session requireUser(String authorization) {
         try { return authService.require(authorization); }
         catch (SecurityException e) { throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, e.getMessage()); }
     }
 
-    private void requireAdmin(String authorization) {
-        try { authService.requireAdmin(authorization); }
+    private AuthService.Session requireAdmin(String authorization) {
+        try { return authService.requireAdmin(authorization); }
         catch (SecurityException e) { throw new ResponseStatusException(HttpStatus.FORBIDDEN, e.getMessage()); }
     }
 
@@ -276,10 +367,12 @@ public class SupportController {
     }
 
     private String text(Object value) { return value == null ? "" : String.valueOf(value).trim(); }
+
     private long number(Object value) {
         if (value instanceof Number n) return n.longValue();
         try { return Long.parseLong(text(value)); } catch (Exception ignored) { return 0L; }
     }
+
     private int asEnabled(Object value) {
         if (value == null) return 1;
         if (value instanceof Boolean b) return b ? 1 : 0;
