@@ -7,6 +7,7 @@ import TicketTimeline from './TicketTimeline.vue'
 import CustomerPortal from './CustomerPortal.vue'
 import { installGlobalFeedback } from './uiFeedback'
 import './style.css'
+import './ui-extra.css'
 
 installGlobalFeedback()
 
