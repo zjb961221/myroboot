@@ -1,5 +1,6 @@
 package com.myroboot.support.controller;
 
+import com.myroboot.support.service.AuthRateLimitService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -15,6 +16,12 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(AuthRateLimitService.RateLimitException.class)
+    public ResponseEntity<Map<String, Object>> handleRateLimit(AuthRateLimitService.RateLimitException e) {
+        log.warn("Rate limit triggered: {}", friendly(e.getMessage(), "too many requests"));
+        return build(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", friendly(e.getMessage(), "操作过于频繁，请稍后再试"));
+    }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException e) {
