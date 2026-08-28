@@ -78,9 +78,8 @@ public class UserAdminController {
         return Map.of("success", count > 0);
     }
 
-    @GetMapping("/template")
-    public ResponseEntity<byte[]> template(@RequestHeader(value = "Authorization", required = false) String authorization) throws Exception {
-        requireAdmin(authorization);
+    @GetMapping({"/template", "/template.xlsx"})
+    public ResponseEntity<byte[]> template() throws Exception {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Sheet sheet = workbook.createSheet("客户用户导入");
             String[] headers = {"煤矿名称", "姓名", "手机", "邮箱", "账号", "密码"};
@@ -101,14 +100,15 @@ public class UserAdminController {
             String[] values = {"XX煤矿", "张三", "13800000000", "zhangsan@example.com", "zhangsan", "123456"};
             for (int i = 0; i < values.length; i++) sample.createCell(i).setCellValue(values[i]);
             Row note = sheet.createRow(3);
-            note.createCell(0).setCellValue("说明：六列均为必填；导入用户默认为客户角色并启用。账号已存在时会更新该账号资料和密码。");
+            note.createCell(0).setCellValue("说明：煤矿名称、姓名、手机、邮箱、账号、密码六项全部必填。导入用户默认为客户角色并启用。");
             sheet.addMergedRegion(new org.apache.poi.ss.util.CellRangeAddress(3, 3, 0, 5));
             workbook.write(out);
             byte[] bytes = out.toByteArray();
-            String encoded = URLEncoder.encode("客户用户导入模板.xlsx", StandardCharsets.UTF_8).replace("+", "%20");
+            String encoded = URLEncoder.encode("煤矿用户导入模板.xlsx", StandardCharsets.UTF_8).replace("+", "%20");
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=customer-user-template.xlsx; filename*=UTF-8''" + encoded)
-                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=mine-user-template.xlsx; filename*=UTF-8''" + encoded)
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store, no-cache, must-revalidate")
+                    .header("X-Content-Type-Options", "nosniff")
                     .contentLength(bytes.length)
                     .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                     .body(bytes);
