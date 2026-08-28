@@ -14,13 +14,18 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api")
 @CrossOrigin(origins = "*")
 public class UploadController {
+    private static final Set<String> ATTACHMENT_EXTENSIONS = Set.of(
+            "png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "log", "doc", "docx", "xls", "xlsx", "zip"
+    );
     private final AuthService authService;
     private final Path uploadDir;
 
@@ -35,18 +40,47 @@ public class UploadController {
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestParam("file") MultipartFile file) throws IOException {
         authService.require(authorization);
-        if (file.isEmpty()) throw new IllegalArgumentException("图片不能为空");
+        if (file.isEmpty()) throw new IllegalArgumentException("请选择要上传的图片");
         String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            throw new IllegalArgumentException("只允许上传图片");
+        if (contentType == null || !contentType.startsWith("image/")) throw new IllegalArgumentException("这里只能上传图片文件");
+        return save(file, 10 * 1024 * 1024L);
+    }
+
+    @PostMapping(value = "/upload/attachment", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Map<String, Object> uploadAttachment(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam("file") MultipartFile file) throws IOException {
+        authService.require(authorization);
+        if (file.isEmpty()) throw new IllegalArgumentException("请选择要上传的附件");
+        if (file.getSize() > 20 * 1024 * 1024L) throw new IllegalArgumentException("单个附件不能超过 20MB");
+        String original = file.getOriginalFilename() == null ? "attachment" : file.getOriginalFilename();
+        String ext = extension(original);
+        if (ext.isEmpty() || !ATTACHMENT_EXTENSIONS.contains(ext)) {
+            throw new IllegalArgumentException("不支持这个附件格式，可上传图片、PDF、Word、Excel、TXT/LOG 或 ZIP");
         }
-        String original = file.getOriginalFilename() == null ? "image" : file.getOriginalFilename();
-        String ext = original.contains(".") ? original.substring(original.lastIndexOf('.')).replaceAll("[^A-Za-z0-9.]", "") : "";
-        String filename = UUID.randomUUID() + ext;
+        return save(file, 20 * 1024 * 1024L);
+    }
+
+    private Map<String, Object> save(MultipartFile file, long maxSize) throws IOException {
+        if (file.getSize() > maxSize) throw new IllegalArgumentException("文件大小超过限制");
+        String original = file.getOriginalFilename() == null ? "file" : file.getOriginalFilename();
+        String ext = extension(original);
+        String filename = UUID.randomUUID() + (ext.isEmpty() ? "" : "." + ext);
         Path target = uploadDir.resolve(filename).normalize();
-        if (!target.startsWith(uploadDir)) throw new IllegalArgumentException("非法文件名");
+        if (!target.startsWith(uploadDir)) throw new IllegalArgumentException("文件名不合法");
         file.transferTo(target);
-        return Map.of("url", "/api/uploads/" + filename, "name", original);
+        return Map.of(
+                "url", "/api/uploads/" + filename,
+                "name", original,
+                "contentType", file.getContentType() == null ? "application/octet-stream" : file.getContentType(),
+                "size", file.getSize()
+        );
+    }
+
+    private String extension(String name) {
+        int dot = name.lastIndexOf('.');
+        if (dot < 0 || dot == name.length() - 1) return "";
+        return name.substring(dot + 1).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
     }
 
     @GetMapping("/uploads/{filename:.+}")
@@ -56,7 +90,7 @@ public class UploadController {
         Resource resource = new UrlResource(file.toUri());
         String contentType = Files.probeContentType(file);
         return ResponseEntity.ok()
-                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=86400")
+                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=3600")
                 .contentType(contentType == null ? MediaType.APPLICATION_OCTET_STREAM : MediaType.parseMediaType(contentType))
                 .body(resource);
     }
