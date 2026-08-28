@@ -22,8 +22,8 @@ spring:
             enable: ${MAIL_STARTTLS_ENABLE:false}
   servlet:
     multipart:
-      max-file-size: 20MB
-      max-request-size: 60MB
+      max-file-size: 220MB
+      max-request-size: 240MB
   sql:
     init:
       mode: always
