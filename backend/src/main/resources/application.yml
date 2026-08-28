@@ -7,11 +7,23 @@ spring:
     username: ${DB_USER:root}
     password: ${DB_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
   sql:
     init:
       mode: always
       schema-locations: classpath:schema.sql
       data-locations: classpath:data.sql
+
+support:
+  upload-dir: ${UPLOAD_DIR:/app/uploads}
+  auth:
+    customer-username: ${CUSTOMER_USERNAME:customer}
+    customer-password: ${CUSTOMER_PASSWORD:customer123}
+    admin-username: ${ADMIN_USERNAME:admin}
+    admin-password: ${ADMIN_PASSWORD:admin123}
 
 logging:
   level:
