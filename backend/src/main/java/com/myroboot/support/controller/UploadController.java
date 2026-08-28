@@ -24,8 +24,14 @@ import java.util.UUID;
 @CrossOrigin(origins = "*")
 public class UploadController {
     private static final Set<String> ATTACHMENT_EXTENSIONS = Set.of(
-            "png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "log", "doc", "docx", "xls", "xlsx", "zip"
+            "png", "jpg", "jpeg", "gif", "webp", "bmp",
+            "pdf", "txt", "log", "csv", "json",
+            "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+            "zip", "rar", "7z",
+            "mp4", "mov", "avi", "mkv", "webm"
     );
+    private static final Set<String> VIDEO_EXTENSIONS = Set.of("mp4", "mov", "avi", "mkv", "webm");
+
     private final AuthService authService;
     private final Path uploadDir;
 
@@ -52,13 +58,16 @@ public class UploadController {
             @RequestParam("file") MultipartFile file) throws IOException {
         authService.require(authorization);
         if (file.isEmpty()) throw new IllegalArgumentException("请选择要上传的附件");
-        if (file.getSize() > 20 * 1024 * 1024L) throw new IllegalArgumentException("单个附件不能超过 20MB");
         String original = file.getOriginalFilename() == null ? "attachment" : file.getOriginalFilename();
         String ext = extension(original);
         if (ext.isEmpty() || !ATTACHMENT_EXTENSIONS.contains(ext)) {
-            throw new IllegalArgumentException("不支持这个附件格式，可上传图片、PDF、Word、Excel、TXT/LOG 或 ZIP");
+            throw new IllegalArgumentException("不支持该文件格式，可上传图片、Office、PDF、日志、压缩包和常见视频文件");
         }
-        return save(file, 20 * 1024 * 1024L);
+        long maxSize = VIDEO_EXTENSIONS.contains(ext) ? 200 * 1024 * 1024L : 30 * 1024 * 1024L;
+        if (file.getSize() > maxSize) {
+            throw new IllegalArgumentException(VIDEO_EXTENSIONS.contains(ext) ? "单个视频不能超过 200MB" : "单个附件不能超过 30MB");
+        }
+        return save(file, maxSize);
     }
 
     private Map<String, Object> save(MultipartFile file, long maxSize) throws IOException {
@@ -73,7 +82,8 @@ public class UploadController {
                 "url", "/api/uploads/" + filename,
                 "name", original,
                 "contentType", file.getContentType() == null ? "application/octet-stream" : file.getContentType(),
-                "size", file.getSize()
+                "size", file.getSize(),
+                "video", VIDEO_EXTENSIONS.contains(ext)
         );
     }
 
@@ -91,6 +101,7 @@ public class UploadController {
         String contentType = Files.probeContentType(file);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CACHE_CONTROL, "private, max-age=3600")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
                 .contentType(contentType == null ? MediaType.APPLICATION_OCTET_STREAM : MediaType.parseMediaType(contentType))
                 .body(resource);
     }
