@@ -4,7 +4,11 @@ import Login from './Login.vue'
 import Register from './Register.vue'
 import AdminUsers from './AdminUsers.vue'
 import TicketTimeline from './TicketTimeline.vue'
+import CustomerPortal from './CustomerPortal.vue'
+import { installGlobalFeedback } from './uiFeedback'
 import './style.css'
+
+installGlobalFeedback()
 
 const path = window.location.pathname
 const token = localStorage.getItem('support_token')
@@ -18,6 +22,8 @@ if (path === '/register') {
   createApp(AdminUsers).mount('#app')
 } else if (path === '/ticket-detail' || path === '/admin/ticket-detail') {
   createApp(TicketTimeline).mount('#app')
-} else {
+} else if (path.startsWith('/admin')) {
   createApp(App).mount('#app')
+} else {
+  createApp(CustomerPortal).mount('#app')
 }
