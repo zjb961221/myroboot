@@ -29,6 +29,7 @@ services:
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: admin123
       UPLOAD_DIR: /app/uploads
+      LOG_FILE: /app/logs/support.log
       MAIL_HOST: ${MAIL_HOST:-}
       MAIL_PORT: ${MAIL_PORT:-465}
       MAIL_USERNAME: ${MAIL_USERNAME:-}
@@ -44,6 +45,7 @@ services:
       - "8080:8080"
     volumes:
       - upload_data:/app/uploads
+      - log_data:/app/logs
 
   frontend:
     build: ./frontend
@@ -57,3 +59,4 @@ services:
 volumes:
   mysql_data:
   upload_data:
+  log_data:
