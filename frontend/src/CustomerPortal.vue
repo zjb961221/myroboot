@@ -17,6 +17,7 @@ const showTicket = ref(false)
 const submittedTicketId = ref(null)
 const myTickets = ref([])
 const ticketUploading = ref(false)
+const attachmentUploading = ref(false)
 const similarChecking = ref(false)
 const similarFaqs = ref([])
 const form = ref({
@@ -24,7 +25,8 @@ const form = ref({
   mineName: profile.value.mineName || '',
   category: '',
   description: '',
-  screenshotUrl: ''
+  screenshotUrl: '',
+  attachments: []
 })
 let searchTimer = null
 
@@ -112,6 +114,46 @@ async function chooseTicketImage(event) {
     ticketUploading.value = false
     event.target.value = ''
   }
+}
+
+async function chooseTicketAttachments(event) {
+  const files = Array.from(event.target.files || [])
+  if (!files.length) return
+  if (form.value.attachments.length + files.length > 10) {
+    showToast('一个工单最多上传 10 个附件')
+    event.target.value = ''
+    return
+  }
+  attachmentUploading.value = true
+  let success = 0
+  try {
+    for (const file of files) {
+      const fd = new FormData()
+      fd.append('file', file)
+      try {
+        const data = await request(`${apiBase}/upload/attachment`, { method: 'POST', body: fd })
+        form.value.attachments.push(data)
+        success++
+      } catch (e) {
+        showToast(`${file.name}：${e.message}`)
+      }
+    }
+    if (success) showToast(`已上传 ${success} 个附件`, 'success')
+  } finally {
+    attachmentUploading.value = false
+    event.target.value = ''
+  }
+}
+
+function removeAttachment(index) {
+  form.value.attachments.splice(index, 1)
+}
+
+function fileSize(size) {
+  const n = Number(size || 0)
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 function validateTicket() {
@@ -207,7 +249,7 @@ onMounted(async () => {
       <div class="flow-arrow">→</div>
       <div class="flow-step"><span>2</span><div><strong>按方案自助排查</strong><small>查看步骤、说明和图片</small></div></div>
       <div class="flow-arrow">→</div>
-      <div class="flow-step"><span>3</span><div><strong>仍未解决再提工单</strong><small>提交前再次检查相似问题</small></div></div>
+      <div class="flow-step"><span>3</span><div><strong>仍未解决再提工单</strong><small>可附带截图、日志和文档</small></div></div>
     </section>
 
     <div class="customer-tabs">
@@ -258,11 +300,21 @@ onMounted(async () => {
             <label>客户名称<input v-model="form.customerName" /></label>
             <label>矿井名称<input v-model="form.mineName" /></label>
             <label>问题类型 <em class="required">*</em><input v-model="form.category" placeholder="APP / 视频 / 数据 / 网络" /></label>
-            <label>故障截图<input type="file" accept="image/*" @change="chooseTicketImage" /><small>{{ ticketUploading ? '上传中...' : '建议上传报错截图' }}</small></label>
+            <label>故障截图<input type="file" accept="image/*" @change="chooseTicketImage" /><small>{{ ticketUploading ? '上传中...' : '建议上传最关键的一张报错截图' }}</small></label>
           </div>
           <div v-if="form.screenshotUrl" class="ticket-preview"><img :src="form.screenshotUrl" /></div>
           <label class="full">问题描述 <em class="required">*</em><textarea v-model="form.description" rows="7" placeholder="请写清发生时间、报错信息、影响范围、已经尝试过什么"></textarea></label>
-          <button class="primary" :disabled="similarChecking" @click="submitTicket(false)">{{ similarChecking ? '正在检查相似问题...' : '检查并提交工单' }}</button>
+
+          <div class="attachment-box">
+            <div class="attachment-head"><div><strong>提交附件</strong><small>可上传日志、Excel、Word、PDF、ZIP 或更多截图；单个不超过 20MB，最多 10 个。</small></div>
+              <label class="attachment-button">{{ attachmentUploading ? '上传中...' : '选择附件' }}<input type="file" multiple accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.log,.doc,.docx,.xls,.xlsx,.zip" @change="chooseTicketAttachments" /></label>
+            </div>
+            <div v-if="form.attachments.length" class="attachment-list">
+              <div v-for="(file,index) in form.attachments" :key="file.url" class="attachment-item"><div><strong>{{ file.name }}</strong><small>{{ fileSize(file.size) }}</small></div><button type="button" @click="removeAttachment(index)">移除</button></div>
+            </div>
+          </div>
+
+          <button class="primary" :disabled="similarChecking || attachmentUploading" @click="submitTicket(false)">{{ similarChecking ? '正在检查相似问题...' : '检查并提交工单' }}</button>
 
           <div v-if="similarFaqs.length" id="similar-box" class="similar-box">
             <div class="similar-head"><div><span>提交前提示</span><h3>问题库里可能已经有类似问题</h3><p>建议先看下面的方案，能解决的话就不用等待人工处理。</p></div></div>
@@ -280,6 +332,7 @@ onMounted(async () => {
         <div class="ticket-card-head"><div><strong>#{{ ticket.id }} {{ ticket.category || '技术问题' }}</strong><small>{{ formatTime(ticket.create_time) }}</small></div><span class="status-pill" :class="ticket.status">{{ statusText(ticket.status) }}</span></div>
         <p class="ticket-description">{{ ticket.description }}</p>
         <a v-if="ticket.screenshot_url" :href="ticket.screenshot_url" target="_blank"><img class="ticket-shot" :src="ticket.screenshot_url" /></a>
+        <div v-if="ticket.attachments?.length" class="ticket-attachments"><strong>附件</strong><a v-for="file in ticket.attachments" :key="file.id" :href="file.file_url" target="_blank">{{ file.original_name }} <small>{{ fileSize(file.file_size) }}</small></a></div>
         <div v-if="ticket.status==='resolved'" class="receipt"><h3>处理回执</h3><dl><dt>问题具体原因</dt><dd>{{ ticket.resolution_reason || '-' }}</dd><dt>处理结果</dt><dd>{{ ticket.resolution_result || '-' }}</dd><dt>解决时间</dt><dd>{{ formatTime(ticket.resolved_time) }}</dd></dl></div>
         <div v-else class="waiting-receipt">技术人员正在处理，解决后这里会显示具体原因和处理回执。</div>
       </article>
