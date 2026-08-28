@@ -35,6 +35,16 @@ CREATE TABLE IF NOT EXISTS support_user (
   INDEX idx_support_user_role (role)
 );
 
+CREATE TABLE IF NOT EXISTS support_session (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  user_id BIGINT NOT NULL,
+  expires_time DATETIME NOT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_support_session_user (user_id),
+  INDEX idx_support_session_expire (expires_time)
+);
+
 CREATE TABLE IF NOT EXISTS email_verification (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   email VARCHAR(200) NOT NULL,
@@ -61,6 +71,17 @@ CREATE TABLE IF NOT EXISTS support_ticket (
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_ticket_user_id (user_id),
   INDEX idx_ticket_status (status)
+);
+
+CREATE TABLE IF NOT EXISTS ticket_attachment (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  ticket_id BIGINT NOT NULL,
+  file_url VARCHAR(1000) NOT NULL,
+  original_name VARCHAR(500) NOT NULL,
+  content_type VARCHAR(200),
+  file_size BIGINT NOT NULL DEFAULT 0,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ticket_attachment_ticket (ticket_id)
 );
 
 CREATE TABLE IF NOT EXISTS ticket_history (
