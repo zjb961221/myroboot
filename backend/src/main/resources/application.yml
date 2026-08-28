@@ -7,6 +7,19 @@ spring:
     username: ${DB_USER:root}
     password: ${DB_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          ssl:
+            enable: ${MAIL_SSL_ENABLE:true}
+          starttls:
+            enable: ${MAIL_STARTTLS_ENABLE:false}
   servlet:
     multipart:
       max-file-size: 10MB
@@ -19,6 +32,8 @@ spring:
 
 support:
   upload-dir: ${UPLOAD_DIR:/app/uploads}
+  mail:
+    from: ${MAIL_FROM:${MAIL_USERNAME:}}
   auth:
     customer-username: ${CUSTOMER_USERNAME:customer}
     customer-password: ${CUSTOMER_PASSWORD:customer123}
