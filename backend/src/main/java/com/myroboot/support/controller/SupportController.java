@@ -37,12 +37,31 @@ public class SupportController {
             @RequestParam(defaultValue = "") String q) {
         requireUser(authorization);
         if (q.isBlank()) return listFaq(authorization);
-        String like = "%" + q.trim() + "%";
-        return enrichImages(jdbcTemplate.queryForList(
-                "SELECT id, category, question, answer, keywords FROM faq " +
-                        "WHERE enabled = 1 AND (question LIKE ? OR answer LIKE ? OR keywords LIKE ?) " +
-                        "ORDER BY id DESC LIMIT 30", like, like, like
-        ));
+        return enrichImages(searchFaqRows(q.trim(), 30));
+    }
+
+    @GetMapping("/faq/suggest")
+    public List<Map<String, Object>> suggestFaq(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam(defaultValue = "") String q) {
+        requireUser(authorization);
+        String keyword = q.trim();
+        if (keyword.isEmpty()) return List.of();
+        return searchFaqRows(keyword, 8).stream().map(row -> Map.<String, Object>of(
+                "id", row.get("id"),
+                "category", row.get("category"),
+                "question", row.get("question")
+        )).toList();
+    }
+
+    @GetMapping("/ticket/similar")
+    public List<Map<String, Object>> similarBeforeTicket(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam(defaultValue = "") String q) {
+        requireUser(authorization);
+        String keyword = q.trim();
+        if (keyword.length() < 2) return List.of();
+        return enrichImages(searchFaqRows(keyword, 5));
     }
 
     @PostMapping("/ticket")
@@ -50,13 +69,13 @@ public class SupportController {
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestBody Map<String, Object> body) {
         AuthService.Session session = requireUser(authorization);
-        String description = String.valueOf(body.getOrDefault("description", "")).trim();
-        if (description.isEmpty()) throw new IllegalArgumentException("问题描述不能为空");
+        String category = required(body, "category", "请选择或填写问题类型");
+        String description = required(body, "description", "请填写问题描述后再提交");
         String customerName = valueOr(body.get("customerName"), session.companyName());
         String mineName = valueOr(body.get("mineName"), session.mineName());
         jdbcTemplate.update(
                 "INSERT INTO support_ticket(user_id, customer_name, mine_name, category, description, screenshot_url) VALUES (?, ?, ?, ?, ?, ?)",
-                session.userId(), customerName, mineName, body.get("category"), description, body.get("screenshotUrl")
+                session.userId(), customerName, mineName, category, description, body.get("screenshotUrl")
         );
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         return Map.of("success", true, "ticketId", id);
@@ -116,7 +135,7 @@ public class SupportController {
             @RequestBody Map<String, Object> body) {
         requireAdmin(authorization);
         String category = required(body, "category", "分类不能为空");
-        String question = required(body, "question", "问题不能为空");
+        String question = required(body, "question", "问题标题不能为空");
         String answer = required(body, "answer", "解决方案不能为空");
         jdbcTemplate.update(
                 "INSERT INTO faq(category, question, answer, keywords, enabled) VALUES (?, ?, ?, ?, ?)",
@@ -134,7 +153,7 @@ public class SupportController {
             @RequestBody Map<String, Object> body) {
         requireAdmin(authorization);
         String category = required(body, "category", "分类不能为空");
-        String question = required(body, "question", "问题不能为空");
+        String question = required(body, "question", "问题标题不能为空");
         String answer = required(body, "answer", "解决方案不能为空");
         int updated = jdbcTemplate.update(
                 "UPDATE faq SET category=?, question=?, answer=?, keywords=?, enabled=? WHERE id=?",
@@ -152,6 +171,28 @@ public class SupportController {
         jdbcTemplate.update("DELETE FROM faq_image WHERE faq_id=?", id);
         int updated = jdbcTemplate.update("DELETE FROM faq WHERE id=?", id);
         return Map.of("success", updated > 0);
+    }
+
+    private List<Map<String, Object>> searchFaqRows(String keyword, int limit) {
+        String like = "%" + keyword + "%";
+        try {
+            return jdbcTemplate.queryForList(
+                    "SELECT id,category,question,answer,keywords," +
+                            "MATCH(category,question,answer,keywords) AGAINST (? IN NATURAL LANGUAGE MODE) AS relevance " +
+                            "FROM faq WHERE enabled=1 AND (" +
+                            "MATCH(category,question,answer,keywords) AGAINST (? IN NATURAL LANGUAGE MODE) > 0 " +
+                            "OR category LIKE ? OR question LIKE ? OR answer LIKE ? OR keywords LIKE ?) " +
+                            "ORDER BY relevance DESC, CASE WHEN question LIKE ? THEN 0 ELSE 1 END, id DESC LIMIT ?",
+                    keyword, keyword, like, like, like, like, like, limit
+            );
+        } catch (Exception ignored) {
+            return jdbcTemplate.queryForList(
+                    "SELECT id,category,question,answer,keywords FROM faq WHERE enabled=1 " +
+                            "AND (category LIKE ? OR question LIKE ? OR answer LIKE ? OR keywords LIKE ?) " +
+                            "ORDER BY CASE WHEN question LIKE ? THEN 0 ELSE 1 END,id DESC LIMIT ?",
+                    like, like, like, like, like, limit
+            );
+        }
     }
 
     private List<Map<String, Object>> enrichImages(List<Map<String, Object>> rows) {
