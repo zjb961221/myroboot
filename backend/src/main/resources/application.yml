@@ -8,14 +8,20 @@ spring:
     password: ${DB_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
   mail:
+    protocol: smtp
     host: ${MAIL_HOST:}
     port: ${MAIL_PORT:465}
     username: ${MAIL_USERNAME:}
     password: ${MAIL_PASSWORD:}
+    default-encoding: UTF-8
+    test-connection: false
     properties:
       mail:
         smtp:
           auth: ${MAIL_SMTP_AUTH:true}
+          connectiontimeout: 8000
+          timeout: 8000
+          writetimeout: 8000
           ssl:
             enable: ${MAIL_SSL_ENABLE:true}
           starttls:
