@@ -61,10 +61,24 @@ public class UploadCleanupService {
                     log.warn("UPLOAD_CLEANUP failed file={}: {}", file.getFileName(), rootMessage(e));
                 }
             }
-            if (deleted > 0) log.info("UPLOAD_CLEANUP deleted={} kept={} graceHours={}", deleted, kept, gracePeriod.toHours());
-            else log.debug("UPLOAD_CLEANUP no orphan files found; kept={}", kept);
+            int expiredStaging = expireStagingRecords();
+            if (deleted > 0 || expiredStaging > 0) {
+                log.info("UPLOAD_CLEANUP deletedFiles={} expiredStaging={} kept={} graceHours={}",
+                        deleted, expiredStaging, kept, gracePeriod.toHours());
+            } else {
+                log.debug("UPLOAD_CLEANUP no orphan files found; kept={}", kept);
+            }
         } catch (Exception e) {
             log.warn("UPLOAD_CLEANUP scan failed: {}", rootMessage(e));
+        }
+    }
+
+    private int expireStagingRecords() {
+        try {
+            return jdbcTemplate.update("DELETE FROM upload_staging WHERE expires_time <= NOW()");
+        } catch (Exception e) {
+            log.warn("UPLOAD_CLEANUP staging cleanup failed: {}", rootMessage(e));
+            return 0;
         }
     }
 
@@ -90,9 +104,7 @@ public class UploadCleanupService {
         return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
     }
 
-    /**
-     * 数据库异常时 contains 永远返回 true，确保清理任务进入 fail-safe 模式。
-     */
+    /** 数据库异常时 contains 永远返回 true，确保清理任务进入 fail-safe 模式。 */
     private static class ProtectiveSet extends HashSet<String> {
         @Override
         public boolean contains(Object o) {
