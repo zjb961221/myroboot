@@ -17,7 +17,7 @@ async function register(){
   if(!form.value.email.trim()) return error.value='请填写邮箱'
   if(!form.value.code.trim()) return error.value='请填写邮箱验证码'
   if(!form.value.password) return error.value='请填写密码'
-  if(form.value.password.length<6) return error.value='密码至少需要 6 位'
+  if(form.value.password.length<8) return error.value='密码至少需要 8 位'
   if(form.value.password!==form.value.confirmPassword) return error.value='两次输入的密码不一致'
   registering.value=true
   try{
@@ -38,7 +38,7 @@ async function register(){
       <label>单位<input v-model="form.companyName" placeholder="公司/单位名称" /></label>
       <label>矿井<input v-model="form.mineName" placeholder="矿井名称，可选" /></label>
       <label>手机号<input v-model="form.phone" placeholder="联系电话，可选" /></label><span></span>
-      <label>密码 <em>*</em><input v-model="form.password" type="password" placeholder="至少 6 位" /></label>
+      <label>密码 <em>*</em><input v-model="form.password" type="password" placeholder="至少 8 位" /></label>
       <label>确认密码 <em>*</em><input v-model="form.confirmPassword" type="password" placeholder="再次输入密码" /></label>
     </div>
     <div v-if="error" class="error"><strong>无法完成注册</strong><span>{{ error }}</span></div><div v-if="message" class="message">{{ message }}</div>
