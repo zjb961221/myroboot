@@ -47,5 +47,8 @@ support:
     admin-password: ${ADMIN_PASSWORD:admin123}
 
 logging:
+  file:
+    name: ${LOG_FILE:/app/logs/support.log}
   level:
+    root: INFO
     org.springframework.jdbc.core: INFO
