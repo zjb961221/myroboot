@@ -13,6 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,8 +26,9 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/faq/attachments")
-@CrossOrigin(origins = "*")
 public class FaqAttachmentPreviewController {
+    private static final int TEXT_PREVIEW_BYTES = 30 * 1024;
+
     private final JdbcTemplate jdbcTemplate;
     private final AuthService authService;
     private final Path uploadDir;
@@ -95,14 +97,18 @@ public class FaqAttachmentPreviewController {
     }
 
     private Map<String, Object> previewText(Path path, String name) throws Exception {
-        byte[] bytes = Files.readAllBytes(path);
-        int limit = Math.min(bytes.length, 30 * 1024);
-        String content = new String(bytes, 0, limit, StandardCharsets.UTF_8);
+        byte[] bytes;
+        try (InputStream in = Files.newInputStream(path)) {
+            bytes = in.readNBytes(TEXT_PREVIEW_BYTES + 1);
+        }
+        boolean truncated = bytes.length > TEXT_PREVIEW_BYTES;
+        int length = Math.min(bytes.length, TEXT_PREVIEW_BYTES);
+        String content = new String(bytes, 0, length, StandardCharsets.UTF_8);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("type", "text");
         result.put("name", name);
         result.put("content", content);
-        result.put("truncated", bytes.length > limit);
+        result.put("truncated", truncated);
         return result;
     }
 
