@@ -24,12 +24,20 @@ public class TicketHistoryController {
     @GetMapping("/tickets/{id}/history")
     public List<Map<String,Object>> history(@RequestHeader(value="Authorization",required=false) String authorization,@PathVariable Long id) {
         AuthService.Session session = requireUser(authorization);
+        List<Map<String,Object>> rows;
         if (!"admin".equals(session.role())) {
             Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_ticket WHERE id=? AND user_id=?",Integer.class,id,session.userId());
             if (count == null || count == 0) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"无权查看该工单");
-            return jdbcTemplate.queryForList("SELECT id,action_type,content,operator_name,create_time FROM ticket_history WHERE ticket_id=? AND visible_to_customer=1 ORDER BY id",id);
+            rows = jdbcTemplate.queryForList("SELECT id,action_type,content,operator_name,create_time FROM ticket_history WHERE ticket_id=? AND visible_to_customer=1 ORDER BY id",id);
+        } else {
+            rows = jdbcTemplate.queryForList("SELECT id,action_type,content,operator_name,visible_to_customer,create_time FROM ticket_history WHERE ticket_id=? ORDER BY id",id);
         }
-        return jdbcTemplate.queryForList("SELECT id,action_type,content,operator_name,visible_to_customer,create_time FROM ticket_history WHERE ticket_id=? ORDER BY id",id);
+        for (Map<String,Object> row : rows) {
+            Long historyId = ((Number) row.get("id")).longValue();
+            row.put("attachments", jdbcTemplate.queryForList(
+                    "SELECT id,file_url,original_name,content_type,file_size,create_time FROM ticket_history_attachment WHERE history_id=? ORDER BY id", historyId));
+        }
+        return rows;
     }
 
     @PostMapping("/admin/tickets/{id}/history")
@@ -40,6 +48,8 @@ public class TicketHistoryController {
         boolean visible = !body.containsKey("visibleToCustomer") || Boolean.parseBoolean(String.valueOf(body.get("visibleToCustomer")));
         jdbcTemplate.update("INSERT INTO ticket_history(ticket_id,operator_user_id,operator_name,action_type,content,visible_to_customer) VALUES (?,?,?,?,?,?)",
                 id,admin.userId(),admin.displayName().isBlank()?admin.username():admin.displayName(),"progress",content,visible?1:0);
+        Long historyId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        saveAttachments(historyId, id, body.get("attachments"));
         jdbcTemplate.update("UPDATE support_ticket SET status=CASE WHEN status='pending' THEN 'processing' ELSE status END WHERE id=?",id);
         return Map.of("success",true);
     }
@@ -54,11 +64,32 @@ public class TicketHistoryController {
             String content = "问题原因：" + reason + "\n处理回执：" + result;
             jdbcTemplate.update("INSERT INTO ticket_history(ticket_id,operator_user_id,operator_name,action_type,content,visible_to_customer) VALUES (?,?,?,?,?,1)",
                     id,admin.userId(),admin.displayName().isBlank()?admin.username():admin.displayName(),"resolved",content);
+            Long historyId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+            saveAttachments(historyId, id, body.get("attachments"));
         }
         return Map.of("success",updated>0);
     }
 
+    private void saveAttachments(Long historyId, Long ticketId, Object rawAttachments) {
+        if (!(rawAttachments instanceof List<?> attachments)) return;
+        int count = 0;
+        for (Object raw : attachments) {
+            if (count >= 10) break;
+            if (!(raw instanceof Map<?,?> item)) continue;
+            String url = text(item.get("url"));
+            String name = text(item.get("name"));
+            String type = text(item.get("contentType"));
+            long size = number(item.get("size"));
+            if (url.isBlank() || name.isBlank() || !url.startsWith("/api/uploads/")) continue;
+            jdbcTemplate.update("INSERT INTO ticket_history_attachment(history_id,ticket_id,file_url,original_name,content_type,file_size) VALUES (?,?,?,?,?,?)",
+                    historyId,ticketId,url,name,type,size);
+            count++;
+        }
+    }
+
     private String required(Map<String,Object> body,String key,String msg){ String v=String.valueOf(body.getOrDefault(key,"")).trim(); if(v.isEmpty()) throw new IllegalArgumentException(msg); return v; }
+    private String text(Object value){ return value==null?"":String.valueOf(value).trim(); }
+    private long number(Object value){ if(value instanceof Number n)return n.longValue(); try{return Long.parseLong(text(value));}catch(Exception e){return 0L;} }
     private AuthService.Session requireUser(String authorization){ try{return authService.require(authorization);}catch(SecurityException e){throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,e.getMessage());} }
     private AuthService.Session requireAdmin(String authorization){ try{return authService.requireAdmin(authorization);}catch(SecurityException e){throw new ResponseStatusException(HttpStatus.FORBIDDEN,e.getMessage());} }
 }
