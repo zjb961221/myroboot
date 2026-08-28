@@ -6,15 +6,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class AuthService {
-    private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     private final JdbcTemplate jdbcTemplate;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -43,14 +45,13 @@ public class AuthService {
         if (((Number) row.get("enabled")).intValue() != 1 || !passwordEncoder.matches(password, String.valueOf(row.get("password_hash")))) {
             throw new IllegalArgumentException("用户名或密码错误");
         }
-        Session session = new Session(
-                ((Number) row.get("id")).longValue(),
-                String.valueOf(row.get("username")),
-                String.valueOf(row.get("role")),
-                text(row.get("display_name")), text(row.get("company_name")), text(row.get("mine_name")), text(row.get("phone"))
+        Session session = fromUserRow(row);
+        String token = UUID.randomUUID() + "." + UUID.randomUUID();
+        jdbcTemplate.update("DELETE FROM support_session WHERE expires_time <= NOW()");
+        jdbcTemplate.update(
+                "INSERT INTO support_session(token_hash,user_id,expires_time) VALUES (?,?,DATE_ADD(NOW(), INTERVAL 7 DAY))",
+                hashToken(token), session.userId()
         );
-        String token = UUID.randomUUID().toString();
-        sessions.put(token, session);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("token", token);
         result.put("userId", session.userId());
@@ -64,23 +65,41 @@ public class AuthService {
     }
 
     public Session require(String authorization) {
-        Session session = sessions.get(bearer(authorization));
-        if (session == null) throw new SecurityException("登录已失效，请重新登录");
-        return session;
+        String token = bearer(authorization);
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT u.id,u.username,u.display_name,u.company_name,u.mine_name,u.phone,u.role,u.enabled " +
+                        "FROM support_session s JOIN support_user u ON u.id=s.user_id " +
+                        "WHERE s.token_hash=? AND s.expires_time>NOW() LIMIT 1",
+                hashToken(token)
+        );
+        if (rows.isEmpty()) throw new SecurityException("登录已失效，请重新登录");
+        Map<String, Object> row = rows.get(0);
+        if (((Number) row.get("enabled")).intValue() != 1) throw new SecurityException("账号已停用，请联系管理员");
+        return fromUserRow(row);
     }
 
     public Session requireAdmin(String authorization) {
         Session session = require(authorization);
-        if (!"admin".equals(session.role())) throw new SecurityException("无管理员权限");
+        if (!"admin".equals(session.role())) throw new SecurityException("当前账号没有管理员权限");
         return session;
     }
 
     public void logout(String authorization) {
-        sessions.remove(bearer(authorization));
+        String token = bearer(authorization);
+        jdbcTemplate.update("DELETE FROM support_session WHERE token_hash=?", hashToken(token));
     }
 
     public String encodePassword(String rawPassword) {
         return passwordEncoder.encode(rawPassword);
+    }
+
+    private Session fromUserRow(Map<String, Object> row) {
+        return new Session(
+                ((Number) row.get("id")).longValue(),
+                String.valueOf(row.get("username")),
+                String.valueOf(row.get("role")),
+                text(row.get("display_name")), text(row.get("company_name")), text(row.get("mine_name")), text(row.get("phone"))
+        );
     }
 
     private void ensureUser(String username, String password, String displayName, String companyName, String mineName, String phone, String role) {
@@ -95,7 +114,18 @@ public class AuthService {
 
     private String bearer(String authorization) {
         if (authorization == null || !authorization.startsWith("Bearer ")) throw new SecurityException("请先登录");
-        return authorization.substring(7).trim();
+        String token = authorization.substring(7).trim();
+        if (token.isEmpty()) throw new SecurityException("请先登录");
+        return token;
+    }
+
+    private String hashToken(String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(token.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("无法初始化登录会话", e);
+        }
     }
 
     private String text(Object value) {
