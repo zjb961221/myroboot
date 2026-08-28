@@ -36,15 +36,12 @@ public class SupportController {
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestParam(defaultValue = "") String q) {
         requireUser(authorization);
-        if (q.isBlank()) {
-            return listFaq(authorization);
-        }
+        if (q.isBlank()) return listFaq(authorization);
         String like = "%" + q.trim() + "%";
         return enrichImages(jdbcTemplate.queryForList(
                 "SELECT id, category, question, answer, keywords FROM faq " +
                         "WHERE enabled = 1 AND (question LIKE ? OR answer LIKE ? OR keywords LIKE ?) " +
-                        "ORDER BY id DESC LIMIT 20",
-                like, like, like
+                        "ORDER BY id DESC LIMIT 30", like, like, like
         ));
     }
 
@@ -52,26 +49,35 @@ public class SupportController {
     public Map<String, Object> createTicket(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestBody Map<String, Object> body) {
-        requireUser(authorization);
+        AuthService.Session session = requireUser(authorization);
         String description = String.valueOf(body.getOrDefault("description", "")).trim();
-        if (description.isEmpty()) {
-            throw new IllegalArgumentException("问题描述不能为空");
-        }
-
+        if (description.isEmpty()) throw new IllegalArgumentException("问题描述不能为空");
+        String customerName = valueOr(body.get("customerName"), session.companyName());
+        String mineName = valueOr(body.get("mineName"), session.mineName());
         jdbcTemplate.update(
-                "INSERT INTO support_ticket(customer_name, mine_name, category, description, screenshot_url) VALUES (?, ?, ?, ?, ?)",
-                body.get("customerName"), body.get("mineName"), body.get("category"), description, body.get("screenshotUrl")
+                "INSERT INTO support_ticket(user_id, customer_name, mine_name, category, description, screenshot_url) VALUES (?, ?, ?, ?, ?, ?)",
+                session.userId(), customerName, mineName, body.get("category"), description, body.get("screenshotUrl")
         );
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         return Map.of("success", true, "ticketId", id);
+    }
+
+    @GetMapping("/tickets/mine")
+    public List<Map<String, Object>> myTickets(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        AuthService.Session session = requireUser(authorization);
+        return jdbcTemplate.queryForList(
+                "SELECT id, customer_name, mine_name, category, description, screenshot_url, status, resolution_reason, resolution_result, resolved_time, create_time " +
+                        "FROM support_ticket WHERE user_id = ? ORDER BY id DESC LIMIT 100", session.userId()
+        );
     }
 
     @GetMapping("/admin/tickets")
     public List<Map<String, Object>> listTickets(@RequestHeader(value = "Authorization", required = false) String authorization) {
         requireAdmin(authorization);
         return jdbcTemplate.queryForList(
-                "SELECT id, customer_name, mine_name, category, description, screenshot_url, status, create_time " +
-                        "FROM support_ticket ORDER BY id DESC LIMIT 200"
+                "SELECT t.id, t.user_id, t.customer_name, t.mine_name, t.category, t.description, t.screenshot_url, t.status, " +
+                        "t.resolution_reason, t.resolution_result, t.resolved_time, t.create_time, u.username, u.display_name " +
+                        "FROM support_ticket t LEFT JOIN support_user u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 300"
         );
     }
 
@@ -82,10 +88,17 @@ public class SupportController {
             @RequestBody Map<String, Object> body) {
         requireAdmin(authorization);
         String status = String.valueOf(body.getOrDefault("status", "")).trim();
-        if (!List.of("pending", "processing", "resolved").contains(status)) {
-            throw new IllegalArgumentException("不支持的工单状态");
+        if (!List.of("pending", "processing", "resolved").contains(status)) throw new IllegalArgumentException("不支持的工单状态");
+        if ("resolved".equals(status)) {
+            String reason = required(body, "resolutionReason", "标记已解决时必须填写具体原因");
+            String result = required(body, "resolutionResult", "标记已解决时必须填写处理回执");
+            int updated = jdbcTemplate.update(
+                    "UPDATE support_ticket SET status='resolved', resolution_reason=?, resolution_result=?, resolved_time=NOW() WHERE id=?",
+                    reason, result, id
+            );
+            return Map.of("success", updated > 0);
         }
-        int updated = jdbcTemplate.update("UPDATE support_ticket SET status = ? WHERE id = ?", status, id);
+        int updated = jdbcTemplate.update("UPDATE support_ticket SET status=?, resolved_time=NULL WHERE id=?", status, id);
         return Map.of("success", updated > 0);
     }
 
@@ -104,7 +117,7 @@ public class SupportController {
         requireAdmin(authorization);
         String category = required(body, "category", "分类不能为空");
         String question = required(body, "question", "问题不能为空");
-        String answer = required(body, "answer", "答案不能为空");
+        String answer = required(body, "answer", "解决方案不能为空");
         jdbcTemplate.update(
                 "INSERT INTO faq(category, question, answer, keywords, enabled) VALUES (?, ?, ?, ?, ?)",
                 category, question, answer, body.get("keywords"), asEnabled(body.get("enabled"))
@@ -122,9 +135,9 @@ public class SupportController {
         requireAdmin(authorization);
         String category = required(body, "category", "分类不能为空");
         String question = required(body, "question", "问题不能为空");
-        String answer = required(body, "answer", "答案不能为空");
+        String answer = required(body, "answer", "解决方案不能为空");
         int updated = jdbcTemplate.update(
-                "UPDATE faq SET category = ?, question = ?, answer = ?, keywords = ?, enabled = ? WHERE id = ?",
+                "UPDATE faq SET category=?, question=?, answer=?, keywords=?, enabled=? WHERE id=?",
                 category, question, answer, body.get("keywords"), asEnabled(body.get("enabled")), id
         );
         replaceFaqImages(id, body.get("images"));
@@ -136,37 +149,33 @@ public class SupportController {
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @PathVariable Long id) {
         requireAdmin(authorization);
-        jdbcTemplate.update("DELETE FROM faq_image WHERE faq_id = ?", id);
-        int updated = jdbcTemplate.update("DELETE FROM faq WHERE id = ?", id);
+        jdbcTemplate.update("DELETE FROM faq_image WHERE faq_id=?", id);
+        int updated = jdbcTemplate.update("DELETE FROM faq WHERE id=?", id);
         return Map.of("success", updated > 0);
     }
 
     private List<Map<String, Object>> enrichImages(List<Map<String, Object>> rows) {
         for (Map<String, Object> row : rows) {
             Long id = ((Number) row.get("id")).longValue();
-            List<String> images = jdbcTemplate.queryForList(
-                    "SELECT image_url FROM faq_image WHERE faq_id = ? ORDER BY sort_no, id", String.class, id
-            );
-            row.put("images", images);
+            row.put("images", jdbcTemplate.queryForList(
+                    "SELECT image_url FROM faq_image WHERE faq_id=? ORDER BY sort_no,id", String.class, id));
         }
         return rows;
     }
 
     private void replaceFaqImages(Long faqId, Object rawImages) {
-        jdbcTemplate.update("DELETE FROM faq_image WHERE faq_id = ?", faqId);
+        jdbcTemplate.update("DELETE FROM faq_image WHERE faq_id=?", faqId);
         if (!(rawImages instanceof List<?> images)) return;
         int sort = 0;
         for (Object image : new ArrayList<>(images)) {
             String url = String.valueOf(image).trim();
-            if (!url.isEmpty()) {
-                jdbcTemplate.update("INSERT INTO faq_image(faq_id, image_url, sort_no) VALUES (?, ?, ?)", faqId, url, sort++);
-            }
+            if (!url.isEmpty()) jdbcTemplate.update("INSERT INTO faq_image(faq_id,image_url,sort_no) VALUES (?,?,?)", faqId, url, sort++);
         }
     }
 
-    private void requireUser(String authorization) {
+    private AuthService.Session requireUser(String authorization) {
         try {
-            authService.require(authorization);
+            return authService.require(authorization);
         } catch (SecurityException e) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, e.getMessage());
         }
@@ -182,8 +191,13 @@ public class SupportController {
 
     private String required(Map<String, Object> body, String key, String message) {
         String value = String.valueOf(body.getOrDefault(key, "")).trim();
-        if (value.isEmpty()) throw new IllegalArgumentException(message);
+        if (value.isEmpty() || "null".equals(value)) throw new IllegalArgumentException(message);
         return value;
+    }
+
+    private String valueOr(Object value, String fallback) {
+        String text = value == null ? "" : String.valueOf(value).trim();
+        return text.isEmpty() ? fallback : text;
     }
 
     private int asEnabled(Object value) {
