@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS faq (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   category VARCHAR(100) NOT NULL,
   question VARCHAR(500) NOT NULL,
-  answer TEXT NOT NULL,
+  answer LONGTEXT NOT NULL,
   keywords VARCHAR(1000),
   enabled TINYINT NOT NULL DEFAULT 1,
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -18,13 +18,34 @@ CREATE TABLE IF NOT EXISTS faq_image (
   INDEX idx_faq_image_faq_id (faq_id)
 );
 
+CREATE TABLE IF NOT EXISTS support_user (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  username VARCHAR(100) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  display_name VARCHAR(100),
+  company_name VARCHAR(200),
+  mine_name VARCHAR(200),
+  phone VARCHAR(50),
+  role VARCHAR(30) NOT NULL DEFAULT 'customer',
+  enabled TINYINT NOT NULL DEFAULT 1,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_support_user_role (role)
+);
+
 CREATE TABLE IF NOT EXISTS support_ticket (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT,
   customer_name VARCHAR(200),
   mine_name VARCHAR(200),
   category VARCHAR(100),
   description TEXT NOT NULL,
   screenshot_url VARCHAR(1000),
   status VARCHAR(50) NOT NULL DEFAULT 'pending',
-  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  resolution_reason TEXT,
+  resolution_result LONGTEXT,
+  resolved_time DATETIME,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ticket_user_id (user_id),
+  INDEX idx_ticket_status (status)
 );
