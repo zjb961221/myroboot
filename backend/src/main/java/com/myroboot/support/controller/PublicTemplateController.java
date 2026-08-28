@@ -40,11 +40,11 @@ public class PublicTemplateController {
             }
 
             Row sample = sheet.createRow(1);
-            String[] values = {"XX煤矿", "张三", "13800000000", "zhangsan@example.com", "zhangsan", "123456"};
+            String[] values = {"XX煤矿", "张三", "13800000000", "zhangsan@example.com", "zhangsan", "12345678"};
             for (int i = 0; i < values.length; i++) sample.createCell(i).setCellValue(values[i]);
 
             Row note = sheet.createRow(3);
-            note.createCell(0).setCellValue("说明：煤矿名称、姓名、手机、邮箱、账号、密码六项全部必填。请勿修改表头。导入用户默认启用并使用客户角色。");
+            note.createCell(0).setCellValue("说明：六项全部必填；密码至少 8 位；请勿修改表头。导入用户默认启用并使用客户角色。");
             sheet.addMergedRegion(new CellRangeAddress(3, 3, 0, 5));
 
             workbook.write(out);
