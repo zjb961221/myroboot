@@ -19,6 +19,18 @@ CREATE TABLE IF NOT EXISTS faq_image (
   INDEX idx_faq_image_faq_id (faq_id)
 );
 
+CREATE TABLE IF NOT EXISTS faq_attachment (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  faq_id BIGINT NOT NULL,
+  file_url VARCHAR(1000) NOT NULL,
+  original_name VARCHAR(500) NOT NULL,
+  content_type VARCHAR(200),
+  file_size BIGINT NOT NULL DEFAULT 0,
+  sort_no INT NOT NULL DEFAULT 0,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_faq_attachment_faq (faq_id)
+);
+
 CREATE TABLE IF NOT EXISTS support_user (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   username VARCHAR(100) NOT NULL UNIQUE,
@@ -94,4 +106,17 @@ CREATE TABLE IF NOT EXISTS ticket_history (
   visible_to_customer TINYINT NOT NULL DEFAULT 1,
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_ticket_history_ticket_id (ticket_id, create_time)
+);
+
+CREATE TABLE IF NOT EXISTS ticket_history_attachment (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  history_id BIGINT NOT NULL,
+  ticket_id BIGINT NOT NULL,
+  file_url VARCHAR(1000) NOT NULL,
+  original_name VARCHAR(500) NOT NULL,
+  content_type VARCHAR(200),
+  file_size BIGINT NOT NULL DEFAULT 0,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_history_attachment_history (history_id),
+  INDEX idx_history_attachment_ticket (ticket_id)
 );
