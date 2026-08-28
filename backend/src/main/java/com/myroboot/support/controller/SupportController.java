@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -78,26 +79,27 @@ public class SupportController {
                 session.userId(), customerName, mineName, category, description, body.get("screenshotUrl")
         );
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        saveTicketAttachments(id, body.get("attachments"));
         return Map.of("success", true, "ticketId", id);
     }
 
     @GetMapping("/tickets/mine")
     public List<Map<String, Object>> myTickets(@RequestHeader(value = "Authorization", required = false) String authorization) {
         AuthService.Session session = requireUser(authorization);
-        return jdbcTemplate.queryForList(
+        return enrichTicketAttachments(jdbcTemplate.queryForList(
                 "SELECT id, customer_name, mine_name, category, description, screenshot_url, status, resolution_reason, resolution_result, resolved_time, create_time " +
                         "FROM support_ticket WHERE user_id = ? ORDER BY id DESC LIMIT 100", session.userId()
-        );
+        ));
     }
 
     @GetMapping("/admin/tickets")
     public List<Map<String, Object>> listTickets(@RequestHeader(value = "Authorization", required = false) String authorization) {
         requireAdmin(authorization);
-        return jdbcTemplate.queryForList(
+        return enrichTicketAttachments(jdbcTemplate.queryForList(
                 "SELECT t.id, t.user_id, t.customer_name, t.mine_name, t.category, t.description, t.screenshot_url, t.status, " +
                         "t.resolution_reason, t.resolution_result, t.resolved_time, t.create_time, u.username, u.display_name " +
                         "FROM support_ticket t LEFT JOIN support_user u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 300"
-        );
+        ));
     }
 
     @PutMapping("/admin/tickets/{id}/status")
@@ -204,6 +206,36 @@ public class SupportController {
         return rows;
     }
 
+    private List<Map<String, Object>> enrichTicketAttachments(List<Map<String, Object>> rows) {
+        for (Map<String, Object> row : rows) {
+            Long ticketId = ((Number) row.get("id")).longValue();
+            row.put("attachments", jdbcTemplate.queryForList(
+                    "SELECT id,file_url,original_name,content_type,file_size,create_time FROM ticket_attachment WHERE ticket_id=? ORDER BY id",
+                    ticketId
+            ));
+        }
+        return rows;
+    }
+
+    private void saveTicketAttachments(Long ticketId, Object rawAttachments) {
+        if (!(rawAttachments instanceof List<?> attachments)) return;
+        int count = 0;
+        for (Object raw : attachments) {
+            if (count >= 10) break;
+            if (!(raw instanceof Map<?, ?> item)) continue;
+            String url = text(item.get("url"));
+            String name = text(item.get("name"));
+            String contentType = text(item.get("contentType"));
+            long size = number(item.get("size"));
+            if (url.isBlank() || name.isBlank() || !url.startsWith("/api/uploads/")) continue;
+            jdbcTemplate.update(
+                    "INSERT INTO ticket_attachment(ticket_id,file_url,original_name,content_type,file_size) VALUES (?,?,?,?,?)",
+                    ticketId, url, name, contentType, size
+            );
+            count++;
+        }
+    }
+
     private void replaceFaqImages(Long faqId, Object rawImages) {
         jdbcTemplate.update("DELETE FROM faq_image WHERE faq_id=?", faqId);
         if (!(rawImages instanceof List<?> images)) return;
@@ -239,6 +271,15 @@ public class SupportController {
     private String valueOr(Object value, String fallback) {
         String text = value == null ? "" : String.valueOf(value).trim();
         return text.isEmpty() ? fallback : text;
+    }
+
+    private String text(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private long number(Object value) {
+        if (value instanceof Number n) return n.longValue();
+        try { return Long.parseLong(text(value)); } catch (Exception ignored) { return 0L; }
     }
 
     private int asEnabled(Object value) {
