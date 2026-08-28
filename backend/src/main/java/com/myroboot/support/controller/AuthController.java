@@ -1,9 +1,11 @@
 package com.myroboot.support.controller;
 
+import com.myroboot.support.config.SessionCookieFilter;
 import com.myroboot.support.service.AuthRateLimitService;
 import com.myroboot.support.service.AuthService;
 import com.myroboot.support.service.EmailVerificationService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -22,18 +24,22 @@ public class AuthController {
     private final AuthService authService;
     private final EmailVerificationService emailVerificationService;
     private final AuthRateLimitService rateLimitService;
+    private final SessionCookieFilter sessionCookieFilter;
     private final JdbcTemplate jdbcTemplate;
 
     public AuthController(AuthService authService, EmailVerificationService emailVerificationService,
-                          AuthRateLimitService rateLimitService, JdbcTemplate jdbcTemplate) {
+                          AuthRateLimitService rateLimitService, SessionCookieFilter sessionCookieFilter,
+                          JdbcTemplate jdbcTemplate) {
         this.authService = authService;
         this.emailVerificationService = emailVerificationService;
         this.rateLimitService = rateLimitService;
+        this.sessionCookieFilter = sessionCookieFilter;
         this.jdbcTemplate = jdbcTemplate;
     }
 
     @PostMapping("/login")
-    public Map<String, Object> login(@RequestBody Map<String, Object> body, HttpServletRequest request) {
+    public Map<String, Object> login(@RequestBody Map<String, Object> body, HttpServletRequest request,
+                                     HttpServletResponse response) {
         String username = String.valueOf(body.getOrDefault("username", "")).trim();
         String password = String.valueOf(body.getOrDefault("password", ""));
         String ip = clientIp(request);
@@ -42,6 +48,9 @@ public class AuthController {
         try {
             Map<String, Object> result = authService.login(username, password);
             rateLimitService.recordLoginSuccess(key);
+            String token = String.valueOf(result.get("token"));
+            long expires = result.get("expiresInSeconds") instanceof Number n ? n.longValue() : 7 * 24 * 3600L;
+            sessionCookieFilter.addSessionCookie(response, token, (int) Math.min(Integer.MAX_VALUE, expires));
             log.info("LOGIN_SUCCESS username={} ip={}", username, ip);
             return result;
         } catch (IllegalArgumentException e) {
@@ -92,12 +101,15 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public Map<String, Object> logout(@RequestHeader(value = "Authorization", required = false) String authorization) {
+    public Map<String, Object> logout(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                      HttpServletResponse response) {
         try {
             authService.logout(authorization);
             return Map.of("success", true);
         } catch (SecurityException e) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, e.getMessage());
+        } finally {
+            sessionCookieFilter.clearSessionCookie(response);
         }
     }
 
