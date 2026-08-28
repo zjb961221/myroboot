@@ -2,155 +2,62 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import Quill from 'quill'
 import 'quill/dist/quill.snow.css'
+import { apiErrorMessage, showToast } from './uiFeedback'
 
 const apiBase = import.meta.env.VITE_API_BASE || '/api'
-const isAdminPath = computed(() => window.location.pathname.startsWith('/admin'))
-const token = ref(localStorage.getItem('support_token') || '')
-const role = ref(localStorage.getItem('support_role') || '')
-const username = ref(localStorage.getItem('support_username') || '')
-const profile = ref(JSON.parse(localStorage.getItem('support_profile') || '{}'))
-const loginForm = ref({ username: '', password: '' })
-const loginError = ref('')
-const loggedIn = computed(() => !!token.value)
-const canViewAdmin = computed(() => role.value === 'admin')
-
-const customerTab = ref('knowledge')
-const keyword = ref('')
-const faqs = ref([])
-const loading = ref(false)
-const selected = ref(null)
-const showTicket = ref(false)
-const submittedTicketId = ref(null)
-const myTickets = ref([])
-const form = ref({ customerName: profile.value.companyName || '', mineName: profile.value.mineName || '', category: '', description: '', screenshotUrl: '' })
-const ticketUploading = ref(false)
-
+const token = localStorage.getItem('support_token') || ''
+const role = localStorage.getItem('support_role') || ''
+const canViewAdmin = computed(() => role === 'admin')
 const adminTab = ref('tickets')
 const tickets = ref([])
 const adminFaqs = ref([])
 const users = ref([])
-const faqUploading = ref(false)
 const importingUsers = ref(false)
 const importResult = ref(null)
-const faqForm = ref({ id: null, category: '', question: '', answer: '', keywords: '', enabled: true, images: [] })
-const resolution = ref({ ticketId: null, reason: '', result: '' })
+const faqUploading = ref(false)
+const faqForm = ref({ id: null, category: '', question: '', answer: '', keywords: '', enabled: true, images: [], attachments: [] })
 const editorEl = ref(null)
 let quill = null
+const logs = ref([])
+const logFile = ref('')
+const logLoading = ref(false)
+const autoRefresh = ref(false)
+let logTimer = null
 
-function authHeaders(extra = {}) {
-  return token.value ? { ...extra, Authorization: `Bearer ${token.value}` } : extra
-}
-
+function authHeaders(extra = {}) { return { ...extra, Authorization: `Bearer ${token}` } }
 async function request(url, options = {}) {
   options.headers = authHeaders(options.headers || {})
   const res = await fetch(url, options)
-  if (res.status === 401 || res.status === 403) {
-    if (res.status === 401) clearSession()
-    throw new Error(res.status === 403 ? '无权限访问' : '登录已失效')
-  }
-  if (!res.ok) throw new Error(await res.text())
+  if (res.status === 401) { localStorage.removeItem('support_token'); location.href = '/'; throw new Error('登录已失效，请重新登录') }
+  if (res.status === 403) throw new Error('无管理员权限')
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
   return res.status === 204 ? null : res.json()
 }
-
-async function login() {
-  loginError.value = ''
-  try {
-    const res = await fetch(`${apiBase}/auth/login`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(loginForm.value)
-    })
-    if (!res.ok) throw new Error('用户名或密码错误')
-    const data = await res.json()
-    token.value = data.token
-    role.value = data.role
-    username.value = data.username
-    profile.value = data
-    localStorage.setItem('support_token', data.token)
-    localStorage.setItem('support_role', data.role)
-    localStorage.setItem('support_username', data.username)
-    localStorage.setItem('support_profile', JSON.stringify(data))
-    window.location.href = data.role === 'admin' ? '/admin' : '/'
-  } catch (e) {
-    loginError.value = e.message || '登录失败'
-  }
-}
-
-function clearSession() {
-  token.value = ''; role.value = ''; username.value = ''; profile.value = {}
-  localStorage.removeItem('support_token'); localStorage.removeItem('support_role'); localStorage.removeItem('support_username'); localStorage.removeItem('support_profile')
-}
-
-async function logout() {
-  try { await request(`${apiBase}/auth/logout`, { method: 'POST' }) } catch {}
-  clearSession(); window.location.href = '/'
-}
-
-async function uploadImage(file) {
-  const data = new FormData(); data.append('file', file)
-  return request(`${apiBase}/upload/image`, { method: 'POST', body: data })
-}
-
-async function loadFaq() {
-  loading.value = true
-  try {
-    const url = keyword.value.trim() ? `${apiBase}/faq/search?q=${encodeURIComponent(keyword.value.trim())}` : `${apiBase}/faq`
-    faqs.value = await request(url)
-  } finally { loading.value = false }
-}
-
-function openFaq(item) { selected.value = item; showTicket.value = false; submittedTicketId.value = null }
-function unresolved() {
-  form.value.category = selected.value?.category || ''
-  form.value.description = selected.value ? `参考问题：${selected.value.question}\n实际问题：` : ''
-  showTicket.value = true
-  setTimeout(() => document.getElementById('ticket-form')?.scrollIntoView({ behavior: 'smooth' }), 50)
-}
-
-async function chooseTicketImage(event) {
-  const file = event.target.files?.[0]; if (!file) return
-  ticketUploading.value = true
-  try { form.value.screenshotUrl = (await uploadImage(file)).url } catch (e) { alert(`上传失败：${e.message}`) }
-  finally { ticketUploading.value = false; event.target.value = '' }
-}
-
-async function submitTicket() {
-  try {
-    const data = await request(`${apiBase}/ticket`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form.value) })
-    submittedTicketId.value = data.ticketId
-    await loadMyTickets()
-  } catch (e) { alert(`提交失败：${e.message}`) }
-}
-
-async function loadMyTickets() { myTickets.value = await request(`${apiBase}/tickets/mine`) }
+async function logout() { try { await request(`${apiBase}/auth/logout`, { method: 'POST' }) } catch {} localStorage.clear(); location.href = '/' }
 async function loadTickets() { tickets.value = await request(`${apiBase}/admin/tickets`) }
 async function loadAdminFaqs() { adminFaqs.value = await request(`${apiBase}/admin/faqs`) }
 async function loadUsers() { users.value = await request(`${apiBase}/admin/users`) }
 
+function statusText(v) { return { pending: '待处理', processing: '处理中', resolved: '已解决' }[v] || v }
+function formatTime(v) { return v ? String(v).replace('T', ' ').slice(0, 19) : '-' }
+function fileSize(v) { const n = Number(v || 0); if (n < 1024) return `${n} B`; if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`; return `${(n / 1048576).toFixed(1)} MB` }
+function isVideo(f) { return String(f.contentType || f.content_type || '').startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name || f.original_name || '') }
+function isImage(f) { return String(f.contentType || f.content_type || '').startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(f.name || f.original_name || '') }
+
 async function setTicketProcessing(ticket) {
-  await request(`${apiBase}/admin/tickets/${ticket.id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'processing' }) })
-  await loadTickets()
-}
-
-function startResolve(ticket) {
-  resolution.value = { ticketId: ticket.id, reason: ticket.resolution_reason || '', result: ticket.resolution_result || '' }
-  setTimeout(() => document.getElementById('resolution-box')?.scrollIntoView({ behavior: 'smooth' }), 50)
-}
-
-async function saveResolution() {
-  if (!resolution.value.reason.trim() || !resolution.value.result.trim()) return alert('请填写具体原因和处理回执')
-  await request(`${apiBase}/admin/tickets/${resolution.value.ticketId}/status`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'resolved', resolutionReason: resolution.value.reason, resolutionResult: resolution.value.result })
-  })
-  resolution.value = { ticketId: null, reason: '', result: '' }
-  await loadTickets()
+  try {
+    await request(`${apiBase}/admin/tickets/${ticket.id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'processing' }) })
+    await loadTickets(); showToast('工单已进入处理中', 'success')
+  } catch (e) { showToast(e.message) }
 }
 
 function initEditor() {
   nextTick(() => {
     if (!editorEl.value) return
-    if (!quill) {
+    if (!quill || quill.container !== editorEl.value) {
       quill = new Quill(editorEl.value, {
-        theme: 'snow', placeholder: '写清楚现象、原因、排查步骤、注意事项……',
+        theme: 'snow',
+        placeholder: '写清楚现象、原因、处理步骤、注意事项……',
         modules: { toolbar: [[{ header: [1, 2, 3, false] }], ['bold', 'italic', 'underline', 'strike'], [{ color: [] }, { background: [] }], [{ list: 'ordered' }, { list: 'bullet' }], [{ indent: '-1' }, { indent: '+1' }], [{ align: [] }], ['blockquote', 'code-block'], ['link'], ['clean']] }
       })
       quill.on('text-change', () => { faqForm.value.answer = quill.root.innerHTML })
@@ -158,43 +65,56 @@ function initEditor() {
     quill.root.innerHTML = faqForm.value.answer || ''
   })
 }
-
 function editFaq(item) {
-  faqForm.value = { id: item.id, category: item.category, question: item.question, answer: item.answer, keywords: item.keywords || '', enabled: item.enabled === 1 || item.enabled === true, images: [...(item.images || [])] }
+  faqForm.value = {
+    id: item.id, category: item.category, question: item.question, answer: item.answer,
+    keywords: item.keywords || '', enabled: item.enabled === 1 || item.enabled === true,
+    images: [...(item.images || [])],
+    attachments: (item.attachments || []).map(a => ({ url: a.file_url, name: a.original_name, contentType: a.content_type, size: a.file_size }))
+  }
   initEditor()
 }
 function resetFaqForm() {
-  faqForm.value = { id: null, category: '', question: '', answer: '', keywords: '', enabled: true, images: [] }
-  if (quill) quill.setContents([])
+  faqForm.value = { id: null, category: '', question: '', answer: '', keywords: '', enabled: true, images: [], attachments: [] }
+  if (quill) quill.setText('')
 }
-async function chooseFaqImages(event) {
-  const files = Array.from(event.target.files || []); if (!files.length) return
+async function uploadFaqAttachments(event) {
+  const files = Array.from(event.target.files || [])
+  if (!files.length) return
+  if (faqForm.value.attachments.length + files.length > 20) { showToast('一个问题最多上传 20 个附件'); event.target.value = ''; return }
   faqUploading.value = true
-  try { for (const file of files) faqForm.value.images.push((await uploadImage(file)).url) }
-  catch (e) { alert(`图片上传失败：${e.message}`) }
-  finally { faqUploading.value = false; event.target.value = '' }
+  let success = 0
+  try {
+    for (const file of files) {
+      const fd = new FormData(); fd.append('file', file)
+      try {
+        const data = await request(`${apiBase}/upload/attachment`, { method: 'POST', body: fd })
+        faqForm.value.attachments.push(data); success++
+      } catch (e) { showToast(`${file.name}：${e.message}`) }
+    }
+    if (success) showToast(`已上传 ${success} 个附件`, 'success')
+  } finally { faqUploading.value = false; event.target.value = '' }
 }
-function removeFaqImage(index) { faqForm.value.images.splice(index, 1) }
+function removeFaqAttachment(index) { faqForm.value.attachments.splice(index, 1) }
 async function saveFaq() {
   faqForm.value.answer = quill?.root.innerHTML || faqForm.value.answer
+  if (!faqForm.value.category.trim()) return showToast('请填写分类')
+  if (!faqForm.value.question.trim()) return showToast('请填写问题标题')
+  if (!faqForm.value.answer || faqForm.value.answer === '<p><br></p>') return showToast('请填写解决方案')
   try {
     const editing = !!faqForm.value.id
     await request(editing ? `${apiBase}/admin/faqs/${faqForm.value.id}` : `${apiBase}/admin/faqs`, {
       method: editing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(faqForm.value)
     })
+    showToast(editing ? '问题库已更新' : '问题已录入', 'success')
     resetFaqForm(); await loadAdminFaqs()
-  } catch (e) { alert(`保存失败：${e.message}`) }
+  } catch (e) { showToast(e.message) }
 }
 async function deleteFaq(item) {
   if (!confirm(`确定删除“${item.question}”吗？`)) return
-  await request(`${apiBase}/admin/faqs/${item.id}`, { method: 'DELETE' }); await loadAdminFaqs()
+  try { await request(`${apiBase}/admin/faqs/${item.id}`, { method: 'DELETE' }); await loadAdminFaqs(); showToast('已删除', 'success') } catch (e) { showToast(e.message) }
 }
 
-async function downloadUserTemplate() {
-  const res = await fetch(`${apiBase}/admin/users/template`, { headers: authHeaders() })
-  if (!res.ok) return alert('模板下载失败')
-  const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '用户导入模板.xlsx'; a.click(); URL.revokeObjectURL(a.href)
-}
 async function importUsers(event) {
   const file = event.target.files?.[0]; if (!file) return
   importingUsers.value = true; importResult.value = null
@@ -202,123 +122,123 @@ async function importUsers(event) {
     const fd = new FormData(); fd.append('file', file)
     importResult.value = await request(`${apiBase}/admin/users/import`, { method: 'POST', body: fd })
     await loadUsers()
-  } catch (e) { alert(`导入失败：${e.message}`) }
+    showToast(importResult.value.errors?.length ? '导入完成，但有部分行未通过校验' : '用户导入成功', importResult.value.errors?.length ? 'warning' : 'success')
+  } catch (e) { showToast(e.message) }
   finally { importingUsers.value = false; event.target.value = '' }
 }
 async function toggleUser(user) {
-  const enabled = !(user.enabled === 1 || user.enabled === true)
-  await request(`${apiBase}/admin/users/${user.id}/enabled`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) })
-  await loadUsers()
+  try {
+    const enabled = !(user.enabled === 1 || user.enabled === true)
+    await request(`${apiBase}/admin/users/${user.id}/enabled`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) })
+    await loadUsers()
+  } catch (e) { showToast(e.message) }
 }
 
-function statusText(status) { return { pending: '待处理', processing: '处理中', resolved: '已解决' }[status] || status }
-function formatTime(value) { return value ? String(value).replace('T', ' ').slice(0, 19) : '-' }
+async function loadLogs() {
+  logLoading.value = true
+  try {
+    const data = await request(`${apiBase}/admin/logs?lines=300`)
+    logs.value = data.lines || []; logFile.value = data.file || ''
+    nextTick(() => { const el = document.querySelector('.log-console'); if (el) el.scrollTop = el.scrollHeight })
+  } catch (e) { showToast(e.message) }
+  finally { logLoading.value = false }
+}
+async function copyLogs() {
+  try { await navigator.clipboard.writeText(logs.value.join('\n')); showToast('日志已复制', 'success') } catch { showToast('复制失败，请手动选择日志内容') }
+}
+function configureAutoRefresh() {
+  if (logTimer) clearInterval(logTimer)
+  if (autoRefresh.value) logTimer = setInterval(loadLogs, 5000)
+}
 
-watch(adminTab, (value) => { if (value === 'faqs') initEditor() })
-watch(customerTab, (value) => { if (value === 'tickets') loadMyTickets() })
-
+watch(adminTab, value => {
+  if (value === 'faqs') initEditor()
+  if (value === 'logs') loadLogs()
+})
+watch(autoRefresh, configureAutoRefresh)
 onMounted(async () => {
-  if (!loggedIn.value) return
-  if (isAdminPath.value) {
-    if (!canViewAdmin.value) return
-    await Promise.all([loadTickets(), loadAdminFaqs(), loadUsers()])
-  } else {
-    await Promise.all([loadFaq(), loadMyTickets()])
-  }
+  if (!canViewAdmin.value) return
+  try { await Promise.all([loadTickets(), loadAdminFaqs(), loadUsers()]) } catch (e) { showToast(e.message) }
 })
 </script>
 
 <template>
-  <main v-if="!loggedIn" class="login-page">
-    <section class="login-card">
-      <span class="badge dark">MYROBOOT SUPPORT</span><h1>技术支持服务平台</h1>
-      <p>登录后先从问题库自助排查，确实无法解决时再提交工单。</p>
-      <label>用户名<input v-model="loginForm.username" @keyup.enter="login" placeholder="请输入用户名" /></label>
-      <label>密码<input v-model="loginForm.password" type="password" @keyup.enter="login" placeholder="请输入密码" /></label>
-      <div v-if="loginError" class="login-error">{{ loginError }}</div>
-      <button class="primary login-button" @click="login">登录</button>
-    </section>
-  </main>
-
-  <main v-else-if="isAdminPath" class="page admin-page">
-    <section v-if="!canViewAdmin" class="panel forbidden"><h2>无管理员权限</h2><a class="primary link-button" href="/">返回客户页面</a></section>
+  <main class="page admin-page">
+    <section v-if="!canViewAdmin" class="panel forbidden"><h2>无管理员权限</h2><a class="primary link-button" href="/">返回登录</a></section>
     <template v-else>
       <section class="admin-header">
-        <div><span class="badge">MYROBOOT ADMIN</span><h1>技术支持管理后台</h1><p>管理用户、问题知识库和客户工单闭环。</p></div>
+        <div><span class="badge">MYROBOOT ADMIN</span><h1>技术支持管理后台</h1><p>统一管理工单、问题库、客户账号和系统日志。</p></div>
         <div class="header-actions"><a class="back-link" href="/">客户页面</a><button class="secondary" @click="logout">退出</button></div>
       </section>
+
       <div class="admin-tabs">
-        <button :class="{ active: adminTab === 'tickets' }" @click="adminTab='tickets'">工单管理</button>
-        <button :class="{ active: adminTab === 'faqs' }" @click="adminTab='faqs'">问题库管理</button>
-        <button :class="{ active: adminTab === 'users' }" @click="adminTab='users'">用户管理</button>
+        <button :class="{active:adminTab==='tickets'}" @click="adminTab='tickets'">工单管理</button>
+        <button :class="{active:adminTab==='faqs'}" @click="adminTab='faqs'">问题库管理</button>
+        <button :class="{active:adminTab==='users'}" @click="adminTab='users'">用户管理</button>
+        <button :class="{active:adminTab==='logs'}" @click="adminTab='logs'">后台日志</button>
       </div>
 
-      <template v-if="adminTab === 'tickets'">
-        <section class="panel admin-panel">
-          <div class="panel-title"><h2>工单列表</h2><span>{{ tickets.length }} 条</span></div>
-          <div class="table-wrap"><table>
-            <thead><tr><th>编号</th><th>客户</th><th>类型</th><th>问题</th><th>截图</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="ticket in tickets" :key="ticket.id">
-                <td>#{{ ticket.id }}<br><small>{{ formatTime(ticket.create_time) }}</small></td>
-                <td>{{ ticket.customer_name || '-' }}<br><small>{{ ticket.mine_name || '-' }}</small></td>
-                <td>{{ ticket.category || '-' }}</td><td class="desc-cell">{{ ticket.description }}</td>
-                <td><a v-if="ticket.screenshot_url" :href="ticket.screenshot_url" target="_blank"><img class="thumb" :src="ticket.screenshot_url" /></a><span v-else>-</span></td>
-                <td><span class="status-pill" :class="ticket.status">{{ statusText(ticket.status) }}</span></td>
-                <td class="row-actions"><button v-if="ticket.status==='pending'" class="secondary" @click="setTicketProcessing(ticket)">开始处理</button><button class="primary small-btn" @click="startResolve(ticket)">{{ ticket.status==='resolved' ? '查看/修改回执' : '填写解决回执' }}</button></td>
-              </tr>
-            </tbody>
-          </table></div>
-        </section>
-        <section v-if="resolution.ticketId" id="resolution-box" class="panel resolution-panel">
-          <div class="panel-title"><h2>工单 #{{ resolution.ticketId }} 解决回执</h2><button class="secondary" @click="resolution={ticketId:null,reason:'',result:''}">关闭</button></div>
-          <label>问题具体原因<textarea v-model="resolution.reason" rows="4" placeholder="例如：矿端前置机到中心网络存在丢包，导致长连接中断"></textarea></label>
-          <label>处理结果 / 给客户的回执<textarea v-model="resolution.result" rows="6" placeholder="写清楚做了什么、当前结果、客户还需要配合什么"></textarea></label>
-          <button class="primary" @click="saveResolution">保存并标记已解决</button>
-        </section>
-      </template>
-
-      <section v-else-if="adminTab === 'faqs'" class="admin-grid">
-        <div class="panel admin-panel">
-          <div class="panel-title"><h2>问题库</h2><span>{{ adminFaqs.length }} 条</span></div>
-          <div class="faq-admin-list"><div v-for="item in adminFaqs" :key="item.id" class="faq-admin-item"><div><span class="category">{{ item.category }}</span><strong>{{ item.question }}</strong><small>{{ item.enabled ? '已启用' : '已停用' }} · {{ item.images?.length || 0 }} 张图</small></div><div class="row-actions"><button class="secondary" @click="editFaq(item)">编辑</button><button class="danger" @click="deleteFaq(item)">删除</button></div></div></div>
-        </div>
-        <div class="panel admin-panel faq-editor">
-          <h2>{{ faqForm.id ? '编辑问题' : '录入新问题' }}</h2>
-          <label>分类<input v-model="faqForm.category" placeholder="视频 / APP / 数据上传 / 网络" /></label>
-          <label>问题标题<input v-model="faqForm.question" placeholder="客户会怎么描述这个问题？" /></label>
-          <label>解决方案</label><div ref="editorEl" class="rich-editor"></div>
-          <label>搜索关键词<input v-model="faqForm.keywords" placeholder="多个关键词可用空格分隔" /></label>
-          <label>附加图片<input type="file" accept="image/*" multiple @change="chooseFaqImages" /><small>{{ faqUploading ? '上传中...' : '可一次上传多张现场截图' }}</small></label>
-          <div v-if="faqForm.images.length" class="image-grid"><div v-for="(image,index) in faqForm.images" :key="image" class="image-item"><img :src="image" /><button @click="removeFaqImage(index)">×</button></div></div>
-          <label class="check-row"><input v-model="faqForm.enabled" type="checkbox" /> 启用并展示给客户</label>
-          <div class="actions"><button class="primary" @click="saveFaq">保存到问题库</button><button v-if="faqForm.id" class="secondary" @click="resetFaqForm">取消编辑</button></div>
-        </div>
-      </section>
-
-      <section v-else class="panel admin-panel">
-        <div class="panel-title"><div><h2>用户管理</h2><p class="muted">通过 Excel 批量维护客户账号、单位和矿井信息。</p></div><span>{{ users.length }} 个账号</span></div>
-        <div class="import-bar"><button class="secondary" @click="downloadUserTemplate">下载 Excel 模板</button><label class="file-button">{{ importingUsers ? '导入中...' : '选择 Excel 导入' }}<input type="file" accept=".xlsx,.xls" @change="importUsers" /></label></div>
-        <div v-if="importResult" class="import-result">新增 {{ importResult.created }} 人，更新 {{ importResult.updated }} 人。<div v-for="err in importResult.errors" :key="err" class="login-error">{{ err }}</div></div>
-        <div class="table-wrap"><table><thead><tr><th>账号</th><th>姓名</th><th>单位</th><th>矿井</th><th>手机号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody>
-          <tr v-for="user in users" :key="user.id"><td>{{ user.username }}</td><td>{{ user.display_name || '-' }}</td><td>{{ user.company_name || '-' }}</td><td>{{ user.mine_name || '-' }}</td><td>{{ user.phone || '-' }}</td><td>{{ user.role }}</td><td>{{ user.enabled ? '启用' : '停用' }}</td><td><button class="secondary small-btn" @click="toggleUser(user)">{{ user.enabled ? '停用' : '启用' }}</button></td></tr>
+      <section v-if="adminTab==='tickets'" class="panel admin-panel">
+        <div class="panel-title"><h2>工单列表</h2><span>{{ tickets.length }} 条</span></div>
+        <div class="table-wrap"><table><thead><tr><th>编号</th><th>客户/矿井</th><th>类型</th><th>问题</th><th>附件</th><th>状态</th><th>操作</th></tr></thead><tbody>
+          <tr v-for="ticket in tickets" :key="ticket.id">
+            <td>#{{ticket.id}}<br><small>{{formatTime(ticket.create_time)}}</small></td>
+            <td>{{ticket.customer_name||'-'}}<br><small>{{ticket.mine_name||'-'}}</small></td>
+            <td>{{ticket.category||'-'}}</td><td class="desc-cell">{{ticket.description}}</td>
+            <td>{{ticket.attachments?.length||0}} 个</td><td><span class="status-pill" :class="ticket.status">{{statusText(ticket.status)}}</span></td>
+            <td class="row-actions"><button v-if="ticket.status==='pending'" class="secondary small-btn" @click="setTicketProcessing(ticket)">开始处理</button><a class="primary link-button small-btn" :href="`/admin/ticket-detail?id=${ticket.id}`">处理 / 回执</a></td>
+          </tr>
         </tbody></table></div>
       </section>
+
+      <section v-else-if="adminTab==='faqs'" class="admin-grid">
+        <div class="panel admin-panel">
+          <div class="panel-title"><div><h2>问题库</h2><p class="muted">客户首页搜索到的标准解决方案。</p></div><span>{{adminFaqs.length}} 条</span></div>
+          <div class="faq-admin-list"><div v-for="item in adminFaqs" :key="item.id" class="faq-admin-item"><div><span class="category">{{item.category}}</span><strong>{{item.question}}</strong><small>{{item.enabled?'已启用':'已停用'}} · {{item.attachments?.length||0}} 个附件<span v-if="item.images?.length"> · {{item.images.length}} 个历史图片</span></small></div><div class="row-actions"><button class="secondary" @click="editFaq(item)">编辑</button><button class="danger" @click="deleteFaq(item)">删除</button></div></div></div>
+        </div>
+        <div class="panel admin-panel faq-editor">
+          <h2>{{faqForm.id?'编辑问题':'录入新问题'}}</h2>
+          <label>分类 <em class="required">*</em><input v-model="faqForm.category" placeholder="视频 / APP / 数据上传 / 网络" /></label>
+          <label>问题标题 <em class="required">*</em><input v-model="faqForm.question" placeholder="客户会怎么描述这个问题？" /></label>
+          <label>解决方案 <em class="required">*</em></label><div ref="editorEl" class="rich-editor"></div>
+          <label>搜索关键词<input v-model="faqForm.keywords" placeholder="多个关键词可用空格分隔" /></label>
+
+          <div class="kb-attachment-box">
+            <div class="kb-attachment-head"><div><strong>附件</strong><small>图片、Excel、Word、PPT、PDF、日志、压缩包、视频统一从这里上传。普通文件≤30MB，视频≤200MB，最多20个。</small></div><label class="file-button">{{faqUploading?'上传中...':'选择附件'}}<input type="file" multiple accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.pdf,.txt,.log,.csv,.json,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z,.mp4,.mov,.avi,.mkv,.webm" @change="uploadFaqAttachments" /></label></div>
+            <div v-if="faqForm.attachments.length" class="kb-files">
+              <div v-for="(file,index) in faqForm.attachments" :key="file.url" class="kb-file">
+                <img v-if="isImage(file)" :src="file.url" />
+                <video v-else-if="isVideo(file)" :src="file.url" controls preload="metadata"></video>
+                <div><strong>{{file.name}}</strong><small>{{fileSize(file.size)}}</small></div>
+                <button class="danger small-btn" @click="removeFaqAttachment(index)">移除</button>
+              </div>
+            </div>
+            <div v-if="faqForm.images.length" class="legacy-note">已有历史图片会继续保留并在客户首页展示；以后新增文件请统一使用“附件”。</div>
+          </div>
+
+          <label class="check-row"><input v-model="faqForm.enabled" type="checkbox" /> 启用并展示给客户</label>
+          <div class="actions"><button class="primary" :disabled="faqUploading" @click="saveFaq">保存到问题库</button><button v-if="faqForm.id" class="secondary" @click="resetFaqForm">取消编辑</button></div>
+        </div>
+      </section>
+
+      <section v-else-if="adminTab==='users'" class="panel admin-panel">
+        <div class="panel-title"><div><h2>用户管理</h2><p class="muted">批量导入或单个维护客户账号。</p></div><span>{{users.length}} 个账号</span></div>
+        <div class="import-bar"><a class="secondary link-button" href="/api/templates/mine-users.xlsx" download="煤矿用户导入模板.xlsx">下载 Excel 模板</a><label class="file-button">{{importingUsers?'导入中...':'选择 Excel 导入'}}<input type="file" accept=".xlsx,.xls" @change="importUsers" /></label><a class="primary link-button" href="/admin/users/manage">单个新增/编辑</a></div>
+        <div v-if="importResult" class="import-result">新增 {{importResult.created}} 人，更新 {{importResult.updated}} 人。<div v-for="err in importResult.errors" :key="err" class="login-error">{{err}}</div></div>
+        <div class="table-wrap"><table><thead><tr><th>账号</th><th>姓名</th><th>煤矿</th><th>手机号</th><th>邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody>
+          <tr v-for="user in users" :key="user.id"><td>{{user.username}}</td><td>{{user.display_name||'-'}}</td><td>{{user.mine_name||'-'}}</td><td>{{user.phone||'-'}}</td><td>{{user.email||'-'}}</td><td>{{user.role}}</td><td>{{user.enabled?'启用':'停用'}}</td><td><button class="secondary small-btn" @click="toggleUser(user)">{{user.enabled?'停用':'启用'}}</button></td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section v-else class="panel admin-panel log-panel">
+        <div class="panel-title"><div><h2>后台日志</h2><p class="muted">直接查看 Spring Boot 最近日志，定位邮箱、上传、数据库和接口异常。敏感字段会做基础脱敏。</p></div><span>{{logs.length}} 行</span></div>
+        <div class="log-toolbar"><button class="primary" :disabled="logLoading" @click="loadLogs">{{logLoading?'刷新中...':'刷新日志'}}</button><button class="secondary" @click="copyLogs">复制日志</button><label class="auto-check"><input v-model="autoRefresh" type="checkbox" /> 每5秒自动刷新</label><small>{{logFile}}</small></div>
+        <pre class="log-console">{{logs.join('\n')}}</pre>
+      </section>
     </template>
-  </main>
-
-  <main v-else class="page">
-    <section class="hero"><div><span class="badge">MYROBOOT SUPPORT</span><h1>客户自助技术支持</h1><p>先自己查问题库，标准方案无法解决时再提交工单。</p></div><div class="header-actions customer-actions"><span>{{ profile.displayName || username }}<small>{{ profile.mineName || profile.companyName }}</small></span><button class="secondary" @click="logout">退出</button></div></section>
-    <section class="flow-panel"><div class="flow-step"><span>1</span><div><strong>搜索问题库</strong><small>输入现象或报错关键词</small></div></div><div class="flow-arrow">→</div><div class="flow-step"><span>2</span><div><strong>按方案自助排查</strong><small>查看标准步骤和图片</small></div></div><div class="flow-arrow">→</div><div class="flow-step"><span>3</span><div><strong>仍未解决再提工单</strong><small>处理结果会回执给你</small></div></div></section>
-    <div class="customer-tabs"><button :class="{active:customerTab==='knowledge'}" @click="customerTab='knowledge'">问题库 / 提交问题</button><button :class="{active:customerTab==='tickets'}" @click="customerTab='tickets'">我的工单 <span v-if="myTickets.length">{{ myTickets.length }}</span></button></div>
-
-    <template v-if="customerTab==='knowledge'">
-      <section class="search-section panel"><div><h2>第一步：先从问题库查找</h2><p>搜索报错文字、功能名称或问题现象。</p></div><div class="search-box light"><input v-model="keyword" @keyup.enter="loadFaq" placeholder="例如：视频黑屏、APP 登录不上、数据未上报" /><button @click="loadFaq">搜索</button></div></section>
-      <section class="content"><div class="panel list-panel"><div class="panel-title"><h2>匹配问题</h2><span>{{ loading ? '搜索中...' : `${faqs.length} 条` }}</span></div><button v-for="item in faqs" :key="item.id" class="faq-item" @click="openFaq(item)"><span class="category">{{ item.category }}</span><strong>{{ item.question }}</strong><span class="arrow">›</span></button><div v-if="!loading&&!faqs.length" class="empty">没有找到对应问题，可以提交工单。</div></div>
-        <div class="panel detail-panel"><template v-if="selected"><span class="category">{{ selected.category }}</span><h2>{{ selected.question }}</h2><div class="answer rich-content" v-html="selected.answer"></div><div v-if="selected.images?.length" class="knowledge-images"><a v-for="image in selected.images" :key="image" :href="image" target="_blank"><img :src="image" /></a></div><div class="resolved-box"><strong>按上面的方案操作后，问题解决了吗？</strong><div class="actions"><button class="success" @click="selected=null">已经解决</button><button class="secondary" @click="unresolved">没有解决，提交工单</button></div></div></template><template v-else><div class="placeholder"><h2>先选择一个问题</h2><p>这里会显示完整解决方案、步骤和图片。</p><button class="secondary" @click="showTicket=true">确实找不到，提交问题</button></div></template></div></section>
-      <section v-if="showTicket" id="ticket-form" class="panel ticket-panel"><div v-if="submittedTicketId" class="submitted"><h2>问题已提交</h2><p>工单编号：#{{ submittedTicketId }}</p><button class="primary" @click="customerTab='tickets'">查看我的工单</button></div><template v-else><h2>第二步：提交完整故障信息</h2><div class="form-grid"><label>客户名称<input v-model="form.customerName" /></label><label>矿井名称<input v-model="form.mineName" /></label><label>问题类型<input v-model="form.category" placeholder="APP / 视频 / 数据 / 网络" /></label><label>故障截图<input type="file" accept="image/*" @change="chooseTicketImage" /><small>{{ ticketUploading ? '上传中...' : '建议上传报错截图' }}</small></label></div><div v-if="form.screenshotUrl" class="ticket-preview"><img :src="form.screenshotUrl" /></div><label class="full">问题描述<textarea v-model="form.description" rows="7" placeholder="发生时间、报错信息、影响范围、已经尝试过什么"></textarea></label><button class="primary" @click="submitTicket">提交工单</button></template></section>
-    </template>
-
-    <section v-else class="ticket-history"><div class="panel-title"><h2>我的工单</h2><span>{{ myTickets.length }} 条</span></div><div v-if="!myTickets.length" class="panel empty">暂时没有提交过工单。</div><article v-for="ticket in myTickets" :key="ticket.id" class="panel ticket-card"><div class="ticket-card-head"><div><strong>#{{ ticket.id }} {{ ticket.category || '技术问题' }}</strong><small>{{ formatTime(ticket.create_time) }}</small></div><span class="status-pill" :class="ticket.status">{{ statusText(ticket.status) }}</span></div><p class="ticket-description">{{ ticket.description }}</p><a v-if="ticket.screenshot_url" :href="ticket.screenshot_url" target="_blank"><img class="ticket-shot" :src="ticket.screenshot_url" /></a><div v-if="ticket.status==='resolved'" class="receipt"><h3>处理回执</h3><dl><dt>问题具体原因</dt><dd>{{ ticket.resolution_reason || '-' }}</dd><dt>处理结果</dt><dd>{{ ticket.resolution_result || '-' }}</dd><dt>解决时间</dt><dd>{{ formatTime(ticket.resolved_time) }}</dd></dl></div><div v-else class="waiting-receipt">技术人员正在处理，解决后这里会显示具体原因和处理回执。</div></article></section>
   </main>
 </template>
+
+<style scoped>
+.required{color:#d92d20;font-style:normal}.kb-attachment-box{border:1px dashed #cad6e6;border-radius:14px;padding:16px;background:#fafcff}.kb-attachment-head{display:flex;justify-content:space-between;gap:18px;align-items:center}.kb-attachment-head>div{display:grid;gap:5px}.kb-attachment-head small{color:#7d8da4;line-height:1.5}.kb-files{display:grid;gap:9px;margin-top:14px}.kb-file{display:grid;grid-template-columns:96px 1fr auto;gap:12px;align-items:center;padding:10px;border:1px solid #e1e7ef;background:#fff;border-radius:10px}.kb-file img,.kb-file video{width:96px;height:72px;object-fit:cover;border-radius:8px;background:#111}.kb-file>div{display:grid;gap:4px;min-width:0}.kb-file strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.kb-file small,.legacy-note{color:#8190a3;font-size:13px}.legacy-note{margin-top:12px;padding:10px;border-radius:8px;background:#f4f6f9}.log-panel{overflow:visible}.log-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}.log-toolbar small{margin-left:auto;color:#7d8da4}.auto-check{display:flex;align-items:center;gap:7px;font-weight:500}.auto-check input{width:auto}.log-console{margin:0;background:#0d1726;color:#d7e2ef;border-radius:13px;padding:18px;min-height:520px;max-height:68vh;overflow:auto;font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-all}.link-button{display:inline-block}.faq-editor .file-button{width:max-content}@media(max-width:800px){.kb-attachment-head{display:grid}.kb-file{grid-template-columns:72px 1fr}.kb-file img,.kb-file video{width:72px;height:58px}.kb-file button{grid-column:2}.log-toolbar small{width:100%;margin-left:0}}
+</style>
