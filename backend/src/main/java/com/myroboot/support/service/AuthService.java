@@ -1,6 +1,8 @@
 package com.myroboot.support.service;
 
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -9,6 +11,8 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,6 +21,8 @@ import java.util.UUID;
 
 @Service
 public class AuthService {
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+
     private final JdbcTemplate jdbcTemplate;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -24,6 +30,7 @@ public class AuthService {
     @Value("${support.auth.customer-password:customer123}") private String customerPassword;
     @Value("${support.auth.admin-username:admin}") private String adminUsername;
     @Value("${support.auth.admin-password:admin123}") private String adminPassword;
+    @Value("${support.auth.session-hours:168}") private int sessionHours;
 
     public AuthService(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
@@ -33,6 +40,13 @@ public class AuthService {
     public void ensureDefaultUsers() {
         ensureUser(adminUsername, adminPassword, "系统管理员", "", "", "", "admin");
         ensureUser(customerUsername, customerPassword, "测试客户", "测试单位", "测试矿井", "", "customer");
+        if ("admin".equals(adminUsername) && "admin123".equals(adminPassword)) {
+            log.warn("SECURITY_WARNING default administrator credentials are configured. Set ADMIN_PASSWORD in .env before production use.");
+        }
+        if (sessionHours < 1) {
+            log.warn("Invalid support.auth.session-hours={}, fallback behavior may be unsafe", sessionHours);
+            sessionHours = 168;
+        }
     }
 
     public Map<String, Object> login(String username, String password) {
@@ -49,8 +63,8 @@ public class AuthService {
         String token = UUID.randomUUID() + "." + UUID.randomUUID();
         jdbcTemplate.update("DELETE FROM support_session WHERE expires_time <= NOW()");
         jdbcTemplate.update(
-                "INSERT INTO support_session(token_hash,user_id,expires_time) VALUES (?,?,DATE_ADD(NOW(), INTERVAL 7 DAY))",
-                hashToken(token), session.userId()
+                "INSERT INTO support_session(token_hash,user_id,expires_time) VALUES (?,?,?)",
+                hashToken(token), session.userId(), Timestamp.valueOf(LocalDateTime.now().plusHours(sessionHours))
         );
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("token", token);
@@ -61,6 +75,7 @@ public class AuthService {
         result.put("companyName", session.companyName());
         result.put("mineName", session.mineName());
         result.put("phone", session.phone());
+        result.put("expiresInSeconds", sessionHours * 3600L);
         return result;
     }
 
@@ -109,6 +124,7 @@ public class AuthService {
                     "INSERT INTO support_user(username, password_hash, display_name, company_name, mine_name, phone, role, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
                     username, passwordEncoder.encode(password), displayName, companyName, mineName, phone, role
             );
+            log.info("DEFAULT_USER_CREATED username={} role={}", username, role);
         }
     }
 
