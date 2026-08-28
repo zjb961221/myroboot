@@ -17,9 +17,9 @@ import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/admin/users")
-@CrossOrigin(origins = "*")
 public class UserAdminController {
     private static final Pattern EMAIL = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+    private static final int MIN_PASSWORD_LENGTH = 8;
     private final JdbcTemplate jdbcTemplate;
     private final AuthService authService;
 
@@ -44,6 +44,7 @@ public class UserAdminController {
         String email = required(body, "email", "请填写邮箱");
         String username = required(body, "username", "请填写账号");
         String password = required(body, "password", "请填写初始密码");
+        validatePassword(password);
         validateEmail(email);
         String role = text(body.get("role"), "customer");
         validateRole(role);
@@ -72,6 +73,7 @@ public class UserAdminController {
             count = jdbcTemplate.update("UPDATE support_user SET username=?,email=?,display_name=?,company_name=?,mine_name=?,phone=?,role=?,enabled=? WHERE id=?",
                     username, email, displayName, mineName, mineName, phone, role, enabled(body.get("enabled")), id);
         } else {
+            validatePassword(password);
             count = jdbcTemplate.update("UPDATE support_user SET username=?,email=?,password_hash=?,display_name=?,company_name=?,mine_name=?,phone=?,role=?,enabled=? WHERE id=?",
                     username, email, authService.encodePassword(password), displayName, mineName, mineName, phone, role, enabled(body.get("enabled")), id);
         }
@@ -97,10 +99,10 @@ public class UserAdminController {
                 sheet.setColumnWidth(i, i == 0 || i == 3 ? 6200 : 4200);
             }
             Row sample = sheet.createRow(1);
-            String[] values = {"XX煤矿", "张三", "13800000000", "zhangsan@example.com", "zhangsan", "123456"};
+            String[] values = {"XX煤矿", "张三", "13800000000", "zhangsan@example.com", "zhangsan", "12345678"};
             for (int i = 0; i < values.length; i++) sample.createCell(i).setCellValue(values[i]);
             Row note = sheet.createRow(3);
-            note.createCell(0).setCellValue("说明：煤矿名称、姓名、手机、邮箱、账号、密码六项全部必填。导入用户默认为客户角色并启用。");
+            note.createCell(0).setCellValue("说明：六列均为必填；密码至少 8 位；导入用户默认为客户角色并启用。");
             sheet.addMergedRegion(new org.apache.poi.ss.util.CellRangeAddress(3, 3, 0, 5));
             workbook.write(out);
             byte[] bytes = out.toByteArray();
@@ -154,6 +156,10 @@ public class UserAdminController {
                     errors.add("第" + (i + 1) + "行：邮箱格式不正确");
                     continue;
                 }
+                if (password.length() < MIN_PASSWORD_LENGTH) {
+                    errors.add("第" + (i + 1) + "行：密码至少需要 8 位");
+                    continue;
+                }
 
                 try {
                     List<Map<String, Object>> existing = jdbcTemplate.queryForList("SELECT id FROM support_user WHERE username=?", username);
@@ -188,7 +194,8 @@ public class UserAdminController {
 
     @PutMapping("/{id}/enabled")
     public Map<String,Object> setEnabled(@RequestHeader(value="Authorization",required=false) String authorization,@PathVariable Long id,@RequestBody Map<String,Object> body) {
-        requireAdmin(authorization); boolean value = Boolean.parseBoolean(String.valueOf(body.getOrDefault("enabled",true)));
+        requireAdmin(authorization);
+        boolean value = Boolean.parseBoolean(String.valueOf(body.getOrDefault("enabled",true)));
         return Map.of("success", jdbcTemplate.update("UPDATE support_user SET enabled=? WHERE id=?", value ? 1 : 0, id) > 0);
     }
 
@@ -199,6 +206,8 @@ public class UserAdminController {
         Integer ec = excludeId == null ? jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_user WHERE email=?",Integer.class,email) : jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_user WHERE email=?"+suffix,Integer.class,email,excludeId);
         if (ec != null && ec > 0) throw new IllegalArgumentException("邮箱已被其他账号使用");
     }
+
+    private void validatePassword(String password) { if (password.length() < MIN_PASSWORD_LENGTH) throw new IllegalArgumentException("密码至少需要 8 位"); }
     private void validateRole(String role) { if (!List.of("customer","admin").contains(role)) throw new IllegalArgumentException("角色设置不正确"); }
     private void validateEmail(String email) { if (!EMAIL.matcher(email).matches()) throw new IllegalArgumentException("邮箱格式不正确"); }
     private int enabled(Object value) { return value == null || Boolean.parseBoolean(String.valueOf(value)) ? 1 : 0; }
