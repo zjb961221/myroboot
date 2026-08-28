@@ -120,3 +120,12 @@ CREATE TABLE IF NOT EXISTS ticket_history_attachment (
   INDEX idx_history_attachment_history (history_id),
   INDEX idx_history_attachment_ticket (ticket_id)
 );
+
+CREATE TABLE IF NOT EXISTS upload_staging (
+  storage_name VARCHAR(255) PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  expires_time DATETIME NOT NULL,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_upload_staging_user (user_id),
+  INDEX idx_upload_staging_expire (expires_time)
+);
