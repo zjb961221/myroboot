@@ -7,7 +7,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,7 +26,7 @@ public class SupportController {
     @GetMapping("/faq")
     public List<Map<String, Object>> listFaq(@RequestHeader(value = "Authorization", required = false) String authorization) {
         requireUser(authorization);
-        return enrichImages(jdbcTemplate.queryForList(
+        return enrichFaqResources(jdbcTemplate.queryForList(
                 "SELECT id, category, question, answer, keywords FROM faq WHERE enabled = 1 ORDER BY id DESC"
         ));
     }
@@ -38,7 +37,7 @@ public class SupportController {
             @RequestParam(defaultValue = "") String q) {
         requireUser(authorization);
         if (q.isBlank()) return listFaq(authorization);
-        return enrichImages(searchFaqRows(q.trim(), 30));
+        return enrichFaqResources(searchFaqRows(q.trim(), 30));
     }
 
     @GetMapping("/faq/suggest")
@@ -49,9 +48,7 @@ public class SupportController {
         String keyword = q.trim();
         if (keyword.isEmpty()) return List.of();
         return searchFaqRows(keyword, 8).stream().map(row -> Map.<String, Object>of(
-                "id", row.get("id"),
-                "category", row.get("category"),
-                "question", row.get("question")
+                "id", row.get("id"), "category", row.get("category"), "question", row.get("question")
         )).toList();
     }
 
@@ -62,7 +59,7 @@ public class SupportController {
         requireUser(authorization);
         String keyword = q.trim();
         if (keyword.length() < 2) return List.of();
-        return enrichImages(searchFaqRows(keyword, 5));
+        return enrichFaqResources(searchFaqRows(keyword, 5));
     }
 
     @PostMapping("/ticket")
@@ -126,7 +123,7 @@ public class SupportController {
     @GetMapping("/admin/faqs")
     public List<Map<String, Object>> listAdminFaqs(@RequestHeader(value = "Authorization", required = false) String authorization) {
         requireAdmin(authorization);
-        return enrichImages(jdbcTemplate.queryForList(
+        return enrichFaqResources(jdbcTemplate.queryForList(
                 "SELECT id, category, question, answer, keywords, enabled, create_time, update_time FROM faq ORDER BY id DESC"
         ));
     }
@@ -139,12 +136,11 @@ public class SupportController {
         String category = required(body, "category", "分类不能为空");
         String question = required(body, "question", "问题标题不能为空");
         String answer = required(body, "answer", "解决方案不能为空");
-        jdbcTemplate.update(
-                "INSERT INTO faq(category, question, answer, keywords, enabled) VALUES (?, ?, ?, ?, ?)",
-                category, question, answer, body.get("keywords"), asEnabled(body.get("enabled"))
-        );
+        jdbcTemplate.update("INSERT INTO faq(category, question, answer, keywords, enabled) VALUES (?, ?, ?, ?, ?)",
+                category, question, answer, body.get("keywords"), asEnabled(body.get("enabled")));
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         replaceFaqImages(id, body.get("images"));
+        replaceFaqAttachments(id, body.get("attachments"));
         return Map.of("success", true, "id", id);
     }
 
@@ -157,11 +153,10 @@ public class SupportController {
         String category = required(body, "category", "分类不能为空");
         String question = required(body, "question", "问题标题不能为空");
         String answer = required(body, "answer", "解决方案不能为空");
-        int updated = jdbcTemplate.update(
-                "UPDATE faq SET category=?, question=?, answer=?, keywords=?, enabled=? WHERE id=?",
-                category, question, answer, body.get("keywords"), asEnabled(body.get("enabled")), id
-        );
+        int updated = jdbcTemplate.update("UPDATE faq SET category=?, question=?, answer=?, keywords=?, enabled=? WHERE id=?",
+                category, question, answer, body.get("keywords"), asEnabled(body.get("enabled")), id);
         replaceFaqImages(id, body.get("images"));
+        replaceFaqAttachments(id, body.get("attachments"));
         return Map.of("success", updated > 0);
     }
 
@@ -171,6 +166,7 @@ public class SupportController {
             @PathVariable Long id) {
         requireAdmin(authorization);
         jdbcTemplate.update("DELETE FROM faq_image WHERE faq_id=?", id);
+        jdbcTemplate.update("DELETE FROM faq_attachment WHERE faq_id=?", id);
         int updated = jdbcTemplate.update("DELETE FROM faq WHERE id=?", id);
         return Map.of("success", updated > 0);
     }
@@ -179,29 +175,23 @@ public class SupportController {
         String like = "%" + keyword + "%";
         try {
             return jdbcTemplate.queryForList(
-                    "SELECT id,category,question,answer,keywords," +
-                            "MATCH(category,question,answer,keywords) AGAINST (? IN NATURAL LANGUAGE MODE) AS relevance " +
-                            "FROM faq WHERE enabled=1 AND (" +
-                            "MATCH(category,question,answer,keywords) AGAINST (? IN NATURAL LANGUAGE MODE) > 0 " +
-                            "OR category LIKE ? OR question LIKE ? OR answer LIKE ? OR keywords LIKE ?) " +
+                    "SELECT id,category,question,answer,keywords,MATCH(category,question,answer,keywords) AGAINST (? IN NATURAL LANGUAGE MODE) AS relevance " +
+                            "FROM faq WHERE enabled=1 AND (MATCH(category,question,answer,keywords) AGAINST (? IN NATURAL LANGUAGE MODE) > 0 OR category LIKE ? OR question LIKE ? OR answer LIKE ? OR keywords LIKE ?) " +
                             "ORDER BY relevance DESC, CASE WHEN question LIKE ? THEN 0 ELSE 1 END, id DESC LIMIT ?",
-                    keyword, keyword, like, like, like, like, like, limit
-            );
+                    keyword, keyword, like, like, like, like, like, limit);
         } catch (Exception ignored) {
             return jdbcTemplate.queryForList(
-                    "SELECT id,category,question,answer,keywords FROM faq WHERE enabled=1 " +
-                            "AND (category LIKE ? OR question LIKE ? OR answer LIKE ? OR keywords LIKE ?) " +
-                            "ORDER BY CASE WHEN question LIKE ? THEN 0 ELSE 1 END,id DESC LIMIT ?",
-                    like, like, like, like, like, limit
-            );
+                    "SELECT id,category,question,answer,keywords FROM faq WHERE enabled=1 AND (category LIKE ? OR question LIKE ? OR answer LIKE ? OR keywords LIKE ?) ORDER BY CASE WHEN question LIKE ? THEN 0 ELSE 1 END,id DESC LIMIT ?",
+                    like, like, like, like, like, limit);
         }
     }
 
-    private List<Map<String, Object>> enrichImages(List<Map<String, Object>> rows) {
+    private List<Map<String, Object>> enrichFaqResources(List<Map<String, Object>> rows) {
         for (Map<String, Object> row : rows) {
             Long id = ((Number) row.get("id")).longValue();
-            row.put("images", jdbcTemplate.queryForList(
-                    "SELECT image_url FROM faq_image WHERE faq_id=? ORDER BY sort_no,id", String.class, id));
+            row.put("images", jdbcTemplate.queryForList("SELECT image_url FROM faq_image WHERE faq_id=? ORDER BY sort_no,id", String.class, id));
+            row.put("attachments", jdbcTemplate.queryForList(
+                    "SELECT id,file_url,original_name,content_type,file_size,create_time FROM faq_attachment WHERE faq_id=? ORDER BY sort_no,id", id));
         }
         return rows;
     }
@@ -210,28 +200,46 @@ public class SupportController {
         for (Map<String, Object> row : rows) {
             Long ticketId = ((Number) row.get("id")).longValue();
             row.put("attachments", jdbcTemplate.queryForList(
-                    "SELECT id,file_url,original_name,content_type,file_size,create_time FROM ticket_attachment WHERE ticket_id=? ORDER BY id",
-                    ticketId
-            ));
+                    "SELECT id,file_url,original_name,content_type,file_size,create_time FROM ticket_attachment WHERE ticket_id=? ORDER BY id", ticketId));
         }
         return rows;
     }
 
     private void saveTicketAttachments(Long ticketId, Object rawAttachments) {
+        saveAttachmentRows("ticket_attachment", "ticket_id", ticketId, rawAttachments, 10, false);
+    }
+
+    private void replaceFaqAttachments(Long faqId, Object rawAttachments) {
+        jdbcTemplate.update("DELETE FROM faq_attachment WHERE faq_id=?", faqId);
         if (!(rawAttachments instanceof List<?> attachments)) return;
-        int count = 0;
+        int sort = 0;
         for (Object raw : attachments) {
-            if (count >= 10) break;
+            if (sort >= 20) break;
             if (!(raw instanceof Map<?, ?> item)) continue;
             String url = text(item.get("url"));
             String name = text(item.get("name"));
             String contentType = text(item.get("contentType"));
             long size = number(item.get("size"));
             if (url.isBlank() || name.isBlank() || !url.startsWith("/api/uploads/")) continue;
-            jdbcTemplate.update(
-                    "INSERT INTO ticket_attachment(ticket_id,file_url,original_name,content_type,file_size) VALUES (?,?,?,?,?)",
-                    ticketId, url, name, contentType, size
-            );
+            jdbcTemplate.update("INSERT INTO faq_attachment(faq_id,file_url,original_name,content_type,file_size,sort_no) VALUES (?,?,?,?,?,?)",
+                    faqId, url, name, contentType, size, sort++);
+        }
+    }
+
+    private void saveAttachmentRows(String table, String idColumn, Long id, Object rawAttachments, int limit, boolean replace) {
+        if (replace) jdbcTemplate.update("DELETE FROM " + table + " WHERE " + idColumn + "=?", id);
+        if (!(rawAttachments instanceof List<?> attachments)) return;
+        int count = 0;
+        for (Object raw : attachments) {
+            if (count >= limit) break;
+            if (!(raw instanceof Map<?, ?> item)) continue;
+            String url = text(item.get("url"));
+            String name = text(item.get("name"));
+            String contentType = text(item.get("contentType"));
+            long size = number(item.get("size"));
+            if (url.isBlank() || name.isBlank() || !url.startsWith("/api/uploads/")) continue;
+            jdbcTemplate.update("INSERT INTO " + table + "(" + idColumn + ",file_url,original_name,content_type,file_size) VALUES (?,?,?,?,?)",
+                    id, url, name, contentType, size);
             count++;
         }
     }
@@ -247,19 +255,13 @@ public class SupportController {
     }
 
     private AuthService.Session requireUser(String authorization) {
-        try {
-            return authService.require(authorization);
-        } catch (SecurityException e) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, e.getMessage());
-        }
+        try { return authService.require(authorization); }
+        catch (SecurityException e) { throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, e.getMessage()); }
     }
 
     private void requireAdmin(String authorization) {
-        try {
-            authService.requireAdmin(authorization);
-        } catch (SecurityException e) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, e.getMessage());
-        }
+        try { authService.requireAdmin(authorization); }
+        catch (SecurityException e) { throw new ResponseStatusException(HttpStatus.FORBIDDEN, e.getMessage()); }
     }
 
     private String required(Map<String, Object> body, String key, String message) {
@@ -269,23 +271,19 @@ public class SupportController {
     }
 
     private String valueOr(Object value, String fallback) {
-        String text = value == null ? "" : String.valueOf(value).trim();
-        return text.isEmpty() ? fallback : text;
+        String t = value == null ? "" : String.valueOf(value).trim();
+        return t.isEmpty() ? fallback : t;
     }
 
-    private String text(Object value) {
-        return value == null ? "" : String.valueOf(value).trim();
-    }
-
+    private String text(Object value) { return value == null ? "" : String.valueOf(value).trim(); }
     private long number(Object value) {
         if (value instanceof Number n) return n.longValue();
         try { return Long.parseLong(text(value)); } catch (Exception ignored) { return 0L; }
     }
-
     private int asEnabled(Object value) {
         if (value == null) return 1;
         if (value instanceof Boolean b) return b ? 1 : 0;
-        String text = String.valueOf(value);
-        return ("1".equals(text) || "true".equalsIgnoreCase(text)) ? 1 : 0;
+        String t = String.valueOf(value);
+        return ("1".equals(t) || "true".equalsIgnoreCase(t)) ? 1 : 0;
     }
 }
