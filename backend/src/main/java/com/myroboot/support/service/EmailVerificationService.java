@@ -1,5 +1,7 @@
 package com.myroboot.support.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.MailAuthenticationException;
@@ -18,18 +20,16 @@ import java.util.Map;
 
 @Service
 public class EmailVerificationService {
+    private static final Logger log = LoggerFactory.getLogger(EmailVerificationService.class);
+    private static final int EMAIL_HOURLY_LIMIT = 10;
+
     private final JdbcTemplate jdbcTemplate;
     private final JavaMailSender mailSender;
     private final SecureRandom random = new SecureRandom();
 
-    @Value("${spring.mail.host:}")
-    private String mailHost;
-
-    @Value("${spring.mail.username:}")
-    private String mailUsername;
-
-    @Value("${support.mail.from:}")
-    private String from;
+    @Value("${spring.mail.host:}") private String mailHost;
+    @Value("${spring.mail.username:}") private String mailUsername;
+    @Value("${support.mail.from:}") private String from;
 
     public EmailVerificationService(JdbcTemplate jdbcTemplate, JavaMailSender mailSender) {
         this.jdbcTemplate = jdbcTemplate;
@@ -45,11 +45,20 @@ public class EmailVerificationService {
         Integer exists = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_user WHERE email=?", Integer.class, email);
         if (exists != null && exists > 0) throw new IllegalArgumentException("该邮箱已注册");
 
+        Integer sentLastHour = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM email_verification WHERE email=? AND purpose='register' AND create_time >= DATE_SUB(NOW(), INTERVAL 1 HOUR)",
+                Integer.class, email);
+        if (sentLastHour != null && sentLastHour >= EMAIL_HOURLY_LIMIT) {
+            throw new AuthRateLimitService.RateLimitException("该邮箱验证码请求次数过多，请一小时后再试");
+        }
+
         List<Map<String, Object>> recent = jdbcTemplate.queryForList(
-                "SELECT create_time FROM email_verification WHERE email=? AND purpose='register' AND used=0 ORDER BY id DESC LIMIT 1", email);
+                "SELECT create_time FROM email_verification WHERE email=? AND purpose='register' ORDER BY id DESC LIMIT 1", email);
         if (!recent.isEmpty()) {
             LocalDateTime created = ((java.sql.Timestamp) recent.get(0).get("create_time")).toLocalDateTime();
-            if (created.plusSeconds(60).isAfter(LocalDateTime.now())) throw new IllegalArgumentException("验证码发送过于频繁，请 60 秒后再试");
+            if (created.plusSeconds(60).isAfter(LocalDateTime.now())) {
+                throw new AuthRateLimitService.RateLimitException("验证码发送过于频繁，请 60 秒后再试");
+            }
         }
 
         String code = String.format("%06d", random.nextInt(1_000_000));
@@ -60,12 +69,14 @@ public class EmailVerificationService {
         message.setText("您的注册验证码是：" + code + "\n验证码 5 分钟内有效，请勿转发给他人。");
 
         try {
-            // 只有真正发送成功后才写入验证码，避免发送失败后仍被 60 秒限流。
             mailSender.send(message);
+            log.info("MAIL_CODE_SENT emailDomain={}", emailDomain(email));
         } catch (MailAuthenticationException e) {
+            log.warn("MAIL_CODE_FAILED reason=authentication emailDomain={}", emailDomain(email));
             throw new IllegalArgumentException("验证码发送失败：邮箱认证失败，请检查 SMTP 授权码是否正确");
         } catch (MailException e) {
             String detail = rootMessage(e).toLowerCase();
+            log.warn("MAIL_CODE_FAILED reason={} emailDomain={}", classifyMailFailure(detail), emailDomain(email));
             if (detail.contains("connection") || detail.contains("connect") || detail.contains("timed out") || detail.contains("timeout")) {
                 throw new IllegalArgumentException("验证码发送失败：无法连接邮件服务器，请检查 SMTP 地址、端口和服务器网络");
             }
@@ -75,6 +86,7 @@ public class EmailVerificationService {
             throw new IllegalArgumentException("验证码发送失败：邮件服务器拒绝发送，请检查 SMTP 配置");
         }
 
+        // 发送成功后才启用新验证码，避免 SMTP 失败造成无效的 60 秒等待。
         jdbcTemplate.update("UPDATE email_verification SET used=1 WHERE email=? AND purpose='register' AND used=0", email);
         jdbcTemplate.update("INSERT INTO email_verification(email,code_hash,purpose,expires_time) VALUES (?,?,'register',DATE_ADD(NOW(), INTERVAL 5 MINUTE))",
                 email, sha256(code));
@@ -103,6 +115,17 @@ public class EmailVerificationService {
         if (mailUsername == null || mailUsername.isBlank()) {
             throw new IllegalArgumentException("验证码发送失败：服务器尚未配置发件邮箱账号");
         }
+    }
+
+    private String classifyMailFailure(String detail) {
+        if (detail.contains("authentication") || detail.contains("535") || detail.contains("password")) return "authentication";
+        if (detail.contains("connection") || detail.contains("connect") || detail.contains("timeout")) return "connection";
+        return "provider";
+    }
+
+    private String emailDomain(String email) {
+        int at = email.indexOf('@');
+        return at >= 0 ? email.substring(at + 1).toLowerCase() : "unknown";
     }
 
     private String rootMessage(Throwable error) {
