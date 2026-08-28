@@ -10,7 +10,7 @@ export function friendlyMessage(input, fallback = '操作失败，请稍后重�
   } catch {}
   if (text.includes('Failed to fetch')) return '无法连接服务器，请检查网络后重试'
   if (text.includes('NetworkError')) return '网络连接异常，请稍后重试'
-  if (text.length > 180 || text.includes('Exception') || text.includes('org.springframework')) return fallback
+  if (text.length > 240 || text.includes('Exception') || text.includes('org.springframework')) return fallback
   return text
 }
 
@@ -32,15 +32,25 @@ export function showToast(message, type = 'error') {
   setTimeout(() => {
     item.classList.remove('show')
     setTimeout(() => item.remove(), 220)
-  }, 3600)
+  }, type === 'error' ? 5200 : 3600)
 }
 
 export async function apiErrorMessage(response, fallback = '操作失败，请稍后重试') {
   try {
     const data = await response.clone().json()
-    return friendlyMessage(data?.message || data?.error, fallback)
+    const message = friendlyMessage(data?.message || data?.error, fallback)
+    const requestId = data?.requestId || response.headers.get('X-Request-Id')
+    return requestId && requestId !== '-' && !message.includes(requestId)
+      ? `${message}（请求编号：${requestId}）`
+      : message
   } catch {
-    try { return friendlyMessage(await response.text(), fallback) } catch { return fallback }
+    try {
+      const message = friendlyMessage(await response.text(), fallback)
+      const requestId = response.headers.get('X-Request-Id')
+      return requestId ? `${message}（请求编号：${requestId}）` : message
+    } catch {
+      return fallback
+    }
   }
 }
 
