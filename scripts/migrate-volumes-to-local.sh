@@ -4,7 +4,15 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-DATA_ROOT="${DATA_ROOT:-$ROOT_DIR/data}"
+dotenv_value() {
+  local key="$1"
+  [[ -f "$ROOT_DIR/.env" ]] || return 0
+  sed -n "s/^${key}=//p" "$ROOT_DIR/.env" | tail -n 1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+DATA_ROOT="${DATA_ROOT:-$(dotenv_value DATA_ROOT)}"
+DATA_ROOT="${DATA_ROOT:-./data}"
+[[ "$DATA_ROOT" = /* ]] || DATA_ROOT="$ROOT_DIR/${DATA_ROOT#./}"
 mkdir -p "$DATA_ROOT/mysql" "$DATA_ROOT/uploads" "$DATA_ROOT/logs" "$DATA_ROOT/nginx-logs"
 
 find_volume() {
@@ -39,6 +47,7 @@ copy_volume() {
   cp -a "$mountpoint"/. "$target"/
 }
 
+echo "Using DATA_ROOT=$DATA_ROOT"
 echo "Stopping MYROBOOT containers before copying persistent data..."
 docker compose down
 
