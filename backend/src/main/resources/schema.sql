@@ -80,9 +80,15 @@ CREATE TABLE IF NOT EXISTS support_ticket (
   resolution_reason TEXT,
   resolution_result LONGTEXT,
   resolved_time DATETIME,
+  cancel_reason VARCHAR(500),
+  cancelled_time DATETIME,
+  is_deleted TINYINT NOT NULL DEFAULT 0,
+  deleted_time DATETIME,
+  deleted_by BIGINT,
   create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_ticket_user_id (user_id),
-  INDEX idx_ticket_status (status)
+  INDEX idx_ticket_status (status),
+  INDEX idx_ticket_deleted (is_deleted, id)
 );
 
 CREATE TABLE IF NOT EXISTS ticket_attachment (
