@@ -14,10 +14,15 @@ async function sendCode(){
 async function register(){
   error.value=''; message.value='';
   if(!form.value.username.trim()) return error.value='请填写用户名'
+  if(!form.value.displayName.trim()) return error.value='请填写姓名'
   if(!form.value.email.trim()) return error.value='请填写邮箱'
   if(!form.value.code.trim()) return error.value='请填写邮箱验证码'
+  if(!form.value.companyName.trim()) return error.value='请填写单位'
+  if(!form.value.mineName.trim()) return error.value='请填写矿井'
+  if(!form.value.phone.trim()) return error.value='请填写手机号'
   if(!form.value.password) return error.value='请填写密码'
   if(form.value.password.length<8) return error.value='密码至少需要 8 位'
+  if(!form.value.confirmPassword) return error.value='请再次输入密码'
   if(form.value.password!==form.value.confirmPassword) return error.value='两次输入的密码不一致'
   registering.value=true
   try{
@@ -29,17 +34,17 @@ async function register(){
 </script>
 <template>
   <main class="register-page"><section class="register-card">
-    <div class="top"><div><span class="badge">MYROBOOT SUPPORT</span><h1>创建客户账号</h1><p>使用邮箱验证码完成注册。注册成功后可查询问题库、提交工单并查看处理回执。</p></div><a href="/">返回登录</a></div>
+    <div class="top"><div><span class="badge">MYROBOOT SUPPORT</span><h1>创建客户账号</h1><p>所有信息均为必填项。使用邮箱验证码完成注册后，可查询问题库、提交工单并查看处理回执。</p></div><a href="/">返回登录</a></div>
     <div class="grid">
-      <label>用户名 <em>*</em><input v-model="form.username" placeholder="3-50 个字符" /></label>
-      <label>姓名<input v-model="form.displayName" placeholder="联系人姓名" /></label>
-      <label>邮箱 <em>*</em><div class="code-row"><input v-model="form.email" type="email" placeholder="name@example.com" /><button :disabled="sending||countdown>0" @click="sendCode">{{ countdown>0?`${countdown}s`:sending?'发送中':'发送验证码' }}</button></div></label>
-      <label>验证码 <em>*</em><input v-model="form.code" maxlength="6" placeholder="6 位验证码" /></label>
-      <label>单位<input v-model="form.companyName" placeholder="公司/单位名称" /></label>
-      <label>矿井<input v-model="form.mineName" placeholder="矿井名称，可选" /></label>
-      <label>手机号<input v-model="form.phone" placeholder="联系电话，可选" /></label><span></span>
-      <label>密码 <em>*</em><input v-model="form.password" type="password" placeholder="至少 8 位" /></label>
-      <label>确认密码 <em>*</em><input v-model="form.confirmPassword" type="password" placeholder="再次输入密码" /></label>
+      <label>用户名 <em>*</em><input v-model="form.username" required placeholder="3-50 个字符" /></label>
+      <label>姓名 <em>*</em><input v-model="form.displayName" required placeholder="联系人姓名" /></label>
+      <label>邮箱 <em>*</em><div class="code-row"><input v-model="form.email" required type="email" placeholder="name@example.com" /><button :disabled="sending||countdown>0" @click="sendCode">{{ countdown>0?`${countdown}s`:sending?'发送中':'发送验证码' }}</button></div></label>
+      <label>验证码 <em>*</em><input v-model="form.code" required maxlength="6" placeholder="6 位验证码" /></label>
+      <label>单位 <em>*</em><input v-model="form.companyName" required placeholder="公司/单位名称" /></label>
+      <label>矿井 <em>*</em><input v-model="form.mineName" required placeholder="矿井名称" /></label>
+      <label>手机号 <em>*</em><input v-model="form.phone" required inputmode="tel" placeholder="联系电话" /></label><span></span>
+      <label>密码 <em>*</em><input v-model="form.password" required type="password" placeholder="至少 8 位" /></label>
+      <label>确认密码 <em>*</em><input v-model="form.confirmPassword" required type="password" placeholder="再次输入密码" /></label>
     </div>
     <div v-if="error" class="error"><strong>无法完成注册</strong><span>{{ error }}</span></div><div v-if="message" class="message">{{ message }}</div>
     <button class="submit" :disabled="registering" @click="register">{{ registering?'注册中...':'注册并进入平台' }}</button>
