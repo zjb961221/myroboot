@@ -1,6 +1,7 @@
 package com.myroboot.support.controller;
 
 import com.myroboot.support.service.AuthService;
+import com.myroboot.support.service.TicketNotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -22,10 +23,12 @@ public class TicketHistoryController {
 
     private final JdbcTemplate jdbcTemplate;
     private final AuthService authService;
+    private final TicketNotificationService notificationService;
 
-    public TicketHistoryController(JdbcTemplate jdbcTemplate, AuthService authService) {
+    public TicketHistoryController(JdbcTemplate jdbcTemplate, AuthService authService, TicketNotificationService notificationService) {
         this.jdbcTemplate = jdbcTemplate;
         this.authService = authService;
+        this.notificationService = notificationService;
     }
 
     @GetMapping("/tickets/{id}/history")
@@ -77,8 +80,9 @@ public class TicketHistoryController {
             Long historyId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             if (historyId == null) throw new IllegalStateException("解决回执保存失败");
             saveAttachments(historyId, id, body.get("attachments"));
+            notificationService.notifyResolvedAfterCommit(id);
             log.info("TICKET_RESOLVED ticketId={} historyId={} operatorUserId={}", id, historyId, admin.userId());
-            return Map.of("success",true,"historyId",historyId);
+            return Map.of("success",true,"historyId",historyId,"customerNotificationScheduled",true);
         }
         return Map.of("success",false);
     }
