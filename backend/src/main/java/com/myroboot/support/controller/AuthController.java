@@ -77,19 +77,26 @@ public class AuthController {
     public Map<String, Object> register(@RequestBody Map<String, Object> body) {
         try {
             String username = required(body, "username", "用户名不能为空");
+            String displayName = required(body, "displayName", "姓名不能为空");
             String email = required(body, "email", "邮箱不能为空");
-            String password = required(body, "password", "密码不能为空");
             String code = required(body, "code", "验证码不能为空");
-            String displayName = String.valueOf(body.getOrDefault("displayName", "")).trim();
-            String companyName = String.valueOf(body.getOrDefault("companyName", "")).trim();
-            String mineName = String.valueOf(body.getOrDefault("mineName", "")).trim();
-            String phone = String.valueOf(body.getOrDefault("phone", "")).trim();
+            String companyName = required(body, "companyName", "单位不能为空");
+            String mineName = required(body, "mineName", "矿井不能为空");
+            String phone = required(body, "phone", "手机号不能为空");
+            String password = required(body, "password", "密码不能为空");
+
             if (username.length() < 3 || username.length() > 50) throw new IllegalArgumentException("用户名长度需为 3-50 个字符");
+            if (displayName.length() > 100) throw new IllegalArgumentException("姓名不能超过 100 个字符");
+            if (companyName.length() > 200) throw new IllegalArgumentException("单位名称不能超过 200 个字符");
+            if (mineName.length() > 200) throw new IllegalArgumentException("矿井名称不能超过 200 个字符");
+            if (phone.length() > 50) throw new IllegalArgumentException("手机号格式不正确");
             if (password.length() < 8) throw new IllegalArgumentException("密码至少 8 位");
+
             Integer usernameExists = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_user WHERE username=?", Integer.class, username);
             if (usernameExists != null && usernameExists > 0) throw new IllegalArgumentException("用户名已存在");
             Integer emailExists = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_user WHERE email=?", Integer.class, email);
             if (emailExists != null && emailExists > 0) throw new IllegalArgumentException("邮箱已注册");
+
             emailVerificationService.verifyRegisterCode(email, code);
             jdbcTemplate.update("INSERT INTO support_user(username,email,password_hash,display_name,company_name,mine_name,phone,role,enabled) VALUES (?,?,?,?,?,?,?,'customer',1)",
                     username, email, authService.encodePassword(password), displayName, companyName, mineName, phone);
