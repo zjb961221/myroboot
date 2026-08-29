@@ -6,6 +6,7 @@ import AdminUsers from './AdminUsers.vue'
 import AdminKnowledge from './AdminKnowledge.vue'
 import TicketTimeline from './TicketTimeline.vue'
 import TicketShare from './TicketShare.vue'
+import FaqShare from './FaqShare.vue'
 import CustomerPortal from './CustomerPortal.vue'
 import { installGlobalFeedback } from './uiFeedback'
 import './style.css'
@@ -19,6 +20,8 @@ const role = localStorage.getItem('support_role')
 
 if (path === '/share/ticket') {
   createApp(TicketShare).mount('#app')
+} else if (path === '/share/faq') {
+  createApp(FaqShare).mount('#app')
 } else if (path === '/register') {
   createApp(Register).mount('#app')
 } else if (!token) {
