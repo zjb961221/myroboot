@@ -48,6 +48,7 @@ spring:
       data-locations: classpath:data.sql
 
 support:
+  public-base-url: ${SUPPORT_PUBLIC_BASE_URL:}
   upload-dir: ${UPLOAD_DIR:/app/uploads}
   upload-cleanup-grace-hours: ${UPLOAD_CLEANUP_GRACE_HOURS:24}
   mail:
