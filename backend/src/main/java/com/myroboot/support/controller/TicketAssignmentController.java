@@ -2,6 +2,7 @@ package com.myroboot.support.controller;
 
 import com.myroboot.support.service.AuthService;
 import com.myroboot.support.service.TicketAssignmentService;
+import com.myroboot.support.service.TicketNotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -23,11 +24,16 @@ public class TicketAssignmentController {
 
     private final AuthService authService;
     private final TicketAssignmentService assignmentService;
+    private final TicketNotificationService notificationService;
     private final JdbcTemplate jdbcTemplate;
 
-    public TicketAssignmentController(AuthService authService, TicketAssignmentService assignmentService, JdbcTemplate jdbcTemplate) {
+    public TicketAssignmentController(AuthService authService,
+                                      TicketAssignmentService assignmentService,
+                                      TicketNotificationService notificationService,
+                                      JdbcTemplate jdbcTemplate) {
         this.authService = authService;
         this.assignmentService = assignmentService;
+        this.notificationService = notificationService;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -112,8 +118,9 @@ public class TicketAssignmentController {
         Long historyId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         if (historyId == null) throw new IllegalStateException("解决回执保存失败");
         saveHistoryAttachments(historyId, id, body.get("attachments"));
+        notificationService.notifyResolvedAfterCommit(id);
         log.info("PROCESSOR_TICKET_RESOLVED ticketId={} processorUserId={} historyId={}", id, processor.userId(), historyId);
-        return Map.of("success", true, "historyId", historyId);
+        return Map.of("success", true, "historyId", historyId, "customerNotificationScheduled", true);
     }
 
     private void ensureAssigned(AuthService.Session processor, Long ticketId, boolean processable) {
