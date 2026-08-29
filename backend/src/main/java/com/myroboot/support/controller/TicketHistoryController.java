@@ -33,7 +33,7 @@ public class TicketHistoryController {
         AuthService.Session session = requireUser(authorization);
         List<Map<String,Object>> rows;
         if (!"admin".equals(session.role())) {
-            Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_ticket WHERE id=? AND user_id=?",Integer.class,id,session.userId());
+            Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_ticket WHERE id=? AND user_id=? AND is_deleted=0",Integer.class,id,session.userId());
             if (count == null || count == 0) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"无权查看该工单");
             rows = jdbcTemplate.queryForList("SELECT id,action_type,content,operator_name,create_time FROM ticket_history WHERE ticket_id=? AND visible_to_customer=1 ORDER BY id",id);
         } else {
@@ -47,7 +47,7 @@ public class TicketHistoryController {
     @Transactional
     public Map<String,Object> addHistory(@RequestHeader(value="Authorization",required=false) String authorization,@PathVariable Long id,@RequestBody Map<String,Object> body) {
         AuthService.Session admin = requireAdmin(authorization);
-        ensureTicketExists(id);
+        ensureTicketProcessable(id, false);
         String content = required(body,"content","处理记录不能为空");
         if (content.length() > 20000) throw new IllegalArgumentException("处理记录过长，请将详细资料改为附件上传");
         boolean visible = !body.containsKey("visibleToCustomer") || Boolean.parseBoolean(String.valueOf(body.get("visibleToCustomer")));
@@ -56,7 +56,7 @@ public class TicketHistoryController {
         Long historyId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         if (historyId == null) throw new IllegalStateException("处理记录保存失败");
         saveAttachments(historyId, id, body.get("attachments"));
-        jdbcTemplate.update("UPDATE support_ticket SET status=CASE WHEN status='pending' THEN 'processing' ELSE status END WHERE id=?",id);
+        jdbcTemplate.update("UPDATE support_ticket SET status=CASE WHEN status='pending' THEN 'processing' ELSE status END WHERE id=? AND is_deleted=0",id);
         log.info("TICKET_PROGRESS_ADDED ticketId={} historyId={} operatorUserId={} visible={}", id, historyId, admin.userId(), visible);
         return Map.of("success",true,"historyId",historyId);
     }
@@ -65,11 +65,11 @@ public class TicketHistoryController {
     @Transactional
     public Map<String,Object> resolve(@RequestHeader(value="Authorization",required=false) String authorization,@PathVariable Long id,@RequestBody Map<String,Object> body) {
         AuthService.Session admin = requireAdmin(authorization);
-        ensureTicketExists(id);
+        ensureTicketProcessable(id, true);
         String reason = required(body,"resolutionReason","具体原因不能为空");
         String result = required(body,"resolutionResult","处理结果不能为空");
         if (reason.length() > 20000 || result.length() > 100000) throw new IllegalArgumentException("回执内容过长，请将详细资料改为附件上传");
-        int updated = jdbcTemplate.update("UPDATE support_ticket SET status='resolved',resolution_reason=?,resolution_result=?,resolved_time=NOW() WHERE id=?",reason,result,id);
+        int updated = jdbcTemplate.update("UPDATE support_ticket SET status='resolved',resolution_reason=?,resolution_result=?,resolved_time=NOW() WHERE id=? AND is_deleted=0",reason,result,id);
         if (updated > 0) {
             String content = "问题原因：" + reason + "\n处理回执：" + result;
             jdbcTemplate.update("INSERT INTO ticket_history(ticket_id,operator_user_id,operator_name,action_type,content,visible_to_customer) VALUES (?,?,?,?,?,1)",
@@ -118,9 +118,14 @@ public class TicketHistoryController {
         }
     }
 
-    private void ensureTicketExists(Long id) {
-        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_ticket WHERE id=?", Integer.class, id);
-        if (count == null || count == 0) throw new IllegalArgumentException("工单不存在或已被删除");
+    private void ensureTicketProcessable(Long id, boolean allowResolved) {
+        List<Map<String,Object>> rows = jdbcTemplate.queryForList("SELECT status,is_deleted FROM support_ticket WHERE id=?", id);
+        if (rows.isEmpty() || ((Number) rows.get(0).get("is_deleted")).intValue() == 1) {
+            throw new IllegalArgumentException("工单不存在或已被删除");
+        }
+        String status = text(rows.get(0).get("status"));
+        if ("cancelled".equals(status)) throw new IllegalArgumentException("已撤销工单不能继续处理");
+        if (!allowResolved && "resolved".equals(status)) throw new IllegalArgumentException("已解决工单不能继续新增处理记录");
     }
 
     private String operatorName(AuthService.Session session) {
