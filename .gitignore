@@ -18,3 +18,8 @@ Thumbs.db
 # Env
 .env
 *.local
+
+# Host-persisted runtime data / backups
+# Never commit live databases, uploads, logs, secrets or backup archives.
+data/
+backups/
