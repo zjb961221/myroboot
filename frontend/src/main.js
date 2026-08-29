@@ -5,6 +5,7 @@ import Register from './Register.vue'
 import AdminUsers from './AdminUsers.vue'
 import AdminKnowledge from './AdminKnowledge.vue'
 import TicketTimeline from './TicketTimeline.vue'
+import TicketShare from './TicketShare.vue'
 import CustomerPortal from './CustomerPortal.vue'
 import { installGlobalFeedback } from './uiFeedback'
 import './style.css'
@@ -16,7 +17,9 @@ const path = window.location.pathname
 const token = localStorage.getItem('support_token')
 const role = localStorage.getItem('support_role')
 
-if (path === '/register') {
+if (path === '/share/ticket') {
+  createApp(TicketShare).mount('#app')
+} else if (path === '/register') {
   createApp(Register).mount('#app')
 } else if (!token) {
   createApp(Login).mount('#app')
