@@ -14,6 +14,51 @@ import static org.mockito.Mockito.*;
 class TicketServiceTest {
 
     @Test
+    void ticketSubmissionRequiresAllFields() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        TicketService service = new TicketService(jdbc);
+        AuthService.Session customer = session(10L, "customer");
+
+        Map<String, Object> complete = new HashMap<>();
+        complete.put("customerName", "测试客户");
+        complete.put("mineName", "测试煤矿");
+        complete.put("category", "视频问题");
+        complete.put("description", "视频无法正常播放");
+        complete.put("screenshotUrl", "/api/uploads/screenshot.png");
+        complete.put("attachments", List.of(Map.of(
+                "url", "/api/uploads/log.txt",
+                "name", "log.txt",
+                "contentType", "text/plain",
+                "size", 100
+        )));
+
+        for (String field : List.of("customerName", "mineName", "category", "description", "screenshotUrl", "attachments")) {
+            Map<String, Object> body = new HashMap<>(complete);
+            body.remove(field);
+            assertThrows(IllegalArgumentException.class, () -> service.create(customer, body), field + " 应为必填");
+        }
+        verifyNoInteractions(jdbc);
+    }
+
+    @Test
+    void ticketSubmissionRejectsInvalidUploadReferences() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        TicketService service = new TicketService(jdbc);
+        AuthService.Session customer = session(10L, "customer");
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("customerName", "测试客户");
+        body.put("mineName", "测试煤矿");
+        body.put("category", "视频问题");
+        body.put("description", "视频无法正常播放");
+        body.put("screenshotUrl", "https://example.com/a.png");
+        body.put("attachments", List.of(Map.of("url", "/api/uploads/log.txt", "name", "log.txt")));
+
+        assertThrows(IllegalArgumentException.class, () -> service.create(customer, body));
+        verifyNoInteractions(jdbc);
+    }
+
+    @Test
     void customerCannotCancelAnotherUsersTicket() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         TicketService service = new TicketService(jdbc);
