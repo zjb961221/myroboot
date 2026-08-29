@@ -76,12 +76,16 @@ public class AuthController {
     @Transactional
     public Map<String, Object> register(@RequestBody Map<String, Object> body) {
         try {
+            String role = required(body, "role", "请选择注册角色").toLowerCase();
+            if (!"customer".equals(role) && !"processor".equals(role)) {
+                throw new IllegalArgumentException("注册角色只能选择客户或处理人员");
+            }
             String username = required(body, "username", "用户名不能为空");
             String displayName = required(body, "displayName", "姓名不能为空");
             String email = required(body, "email", "邮箱不能为空");
             String code = required(body, "code", "验证码不能为空");
             String companyName = required(body, "companyName", "单位不能为空");
-            String mineName = required(body, "mineName", "矿井不能为空");
+            String mineName = "customer".equals(role) ? required(body, "mineName", "矿井不能为空") : "技术支持团队";
             String phone = required(body, "phone", "手机号不能为空");
             String password = required(body, "password", "密码不能为空");
 
@@ -98,10 +102,10 @@ public class AuthController {
             if (emailExists != null && emailExists > 0) throw new IllegalArgumentException("邮箱已注册");
 
             emailVerificationService.verifyRegisterCode(email, code);
-            jdbcTemplate.update("INSERT INTO support_user(username,email,password_hash,display_name,company_name,mine_name,phone,role,enabled) VALUES (?,?,?,?,?,?,?,'customer',1)",
-                    username, email, authService.encodePassword(password), displayName, companyName, mineName, phone);
-            log.info("USER_REGISTERED username={} emailDomain={}", username, emailDomain(email));
-            return Map.of("success", true, "message", "注册成功，请登录");
+            jdbcTemplate.update("INSERT INTO support_user(username,email,password_hash,display_name,company_name,mine_name,phone,role,enabled) VALUES (?,?,?,?,?,?,?,?,1)",
+                    username, email, authService.encodePassword(password), displayName, companyName, mineName, phone, role);
+            log.info("USER_REGISTERED username={} role={} emailDomain={}", username, role, emailDomain(email));
+            return Map.of("success", true, "message", "注册成功，请登录", "role", role);
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
