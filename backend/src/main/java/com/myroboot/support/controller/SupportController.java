@@ -2,6 +2,7 @@ package com.myroboot.support.controller;
 
 import com.myroboot.support.service.AuthService;
 import com.myroboot.support.service.FaqService;
+import com.myroboot.support.service.TicketNotificationService;
 import com.myroboot.support.service.TicketService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -16,11 +17,16 @@ public class SupportController {
     private final AuthService authService;
     private final FaqService faqService;
     private final TicketService ticketService;
+    private final TicketNotificationService notificationService;
 
-    public SupportController(AuthService authService, FaqService faqService, TicketService ticketService) {
+    public SupportController(AuthService authService,
+                             FaqService faqService,
+                             TicketService ticketService,
+                             TicketNotificationService notificationService) {
         this.authService = authService;
         this.faqService = faqService;
         this.ticketService = ticketService;
+        this.notificationService = notificationService;
     }
 
     @GetMapping("/faq")
@@ -100,7 +106,9 @@ public class SupportController {
             @PathVariable Long id,
             @RequestBody Map<String, Object> body) {
         boolean success = ticketService.updateStatus(requireAdmin(authorization), id, body);
-        return Map.of("success", success);
+        boolean resolved = "resolved".equals(String.valueOf(body.getOrDefault("status", "")).trim());
+        if (success && resolved) notificationService.notifyResolvedAfterCommit(id);
+        return Map.of("success", success, "customerNotificationScheduled", success && resolved);
     }
 
     @GetMapping("/admin/faqs")
