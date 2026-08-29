@@ -127,6 +127,21 @@ CREATE TABLE IF NOT EXISTS ticket_history_attachment (
   INDEX idx_history_attachment_ticket (ticket_id)
 );
 
+CREATE TABLE IF NOT EXISTS ticket_share (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  ticket_id BIGINT NOT NULL,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  created_by BIGINT NOT NULL,
+  expires_time DATETIME NOT NULL,
+  revoked TINYINT NOT NULL DEFAULT 0,
+  revoked_time DATETIME,
+  access_count BIGINT NOT NULL DEFAULT 0,
+  last_access_time DATETIME,
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ticket_share_ticket (ticket_id, create_time),
+  INDEX idx_ticket_share_expire (expires_time, revoked)
+);
+
 CREATE TABLE IF NOT EXISTS upload_staging (
   storage_name VARCHAR(255) PRIMARY KEY,
   user_id BIGINT NOT NULL,
