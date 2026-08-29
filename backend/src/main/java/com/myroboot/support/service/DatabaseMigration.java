@@ -24,10 +24,16 @@ public class DatabaseMigration {
         addColumnIfMissing("support_ticket", "resolution_reason", "TEXT NULL");
         addColumnIfMissing("support_ticket", "resolution_result", "LONGTEXT NULL");
         addColumnIfMissing("support_ticket", "resolved_time", "DATETIME NULL");
+        addColumnIfMissing("support_ticket", "cancel_reason", "VARCHAR(500) NULL");
+        addColumnIfMissing("support_ticket", "cancelled_time", "DATETIME NULL");
+        addColumnIfMissing("support_ticket", "is_deleted", "TINYINT NOT NULL DEFAULT 0");
+        addColumnIfMissing("support_ticket", "deleted_time", "DATETIME NULL");
+        addColumnIfMissing("support_ticket", "deleted_by", "BIGINT NULL");
 
         executeOptional("faq.answer LONGTEXT", "ALTER TABLE faq MODIFY answer LONGTEXT NOT NULL");
         createIndexIfMissing("support_user", "uk_support_user_email", "CREATE UNIQUE INDEX uk_support_user_email ON support_user(email)");
         createIndexIfMissing("support_ticket", "idx_ticket_user_id", "CREATE INDEX idx_ticket_user_id ON support_ticket(user_id)");
+        createIndexIfMissing("support_ticket", "idx_ticket_deleted", "CREATE INDEX idx_ticket_deleted ON support_ticket(is_deleted,id)");
         createIndexIfMissing("faq", "ft_faq_search", "CREATE FULLTEXT INDEX ft_faq_search ON faq(category,question,answer,keywords) WITH PARSER ngram");
 
         executeOptional("support_session table", "CREATE TABLE IF NOT EXISTS support_session (id BIGINT PRIMARY KEY AUTO_INCREMENT,token_hash VARCHAR(64) NOT NULL UNIQUE,user_id BIGINT NOT NULL,expires_time DATETIME NOT NULL,create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,INDEX idx_support_session_user(user_id),INDEX idx_support_session_expire(expires_time))");
