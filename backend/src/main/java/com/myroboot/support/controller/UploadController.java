@@ -136,6 +136,14 @@ public class UploadController {
         if (exists("SELECT COUNT(*) FROM faq_attachment a JOIN faq f ON f.id=a.faq_id WHERE a.file_url=? AND f.enabled=1", url)) return true;
         if (exists("SELECT COUNT(*) FROM faq_image i JOIN faq f ON f.id=i.faq_id WHERE i.image_url=? AND f.enabled=1", url)) return true;
 
+        if ("processor".equals(session.role())) {
+            if (exists("SELECT COUNT(*) FROM support_ticket WHERE screenshot_url=? AND assigned_to=? AND is_deleted=0", url, session.userId())) return true;
+            if (exists("SELECT COUNT(*) FROM ticket_attachment a JOIN support_ticket t ON t.id=a.ticket_id WHERE a.file_url=? AND t.assigned_to=? AND t.is_deleted=0",
+                    url, session.userId())) return true;
+            return exists("SELECT COUNT(*) FROM ticket_history_attachment a JOIN support_ticket t ON t.id=a.ticket_id WHERE a.file_url=? AND t.assigned_to=? AND t.is_deleted=0",
+                    url, session.userId());
+        }
+
         if (exists("SELECT COUNT(*) FROM support_ticket WHERE screenshot_url=? AND user_id=? AND is_deleted=0", url, session.userId())) return true;
         if (exists("SELECT COUNT(*) FROM ticket_attachment a JOIN support_ticket t ON t.id=a.ticket_id WHERE a.file_url=? AND t.user_id=? AND t.is_deleted=0",
                 url, session.userId())) return true;
