@@ -12,8 +12,21 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+
+dotenv_value() {
+  local key="$1"
+  [[ -f "$ROOT_DIR/.env" ]] || return 0
+  sed -n "s/^${key}=//p" "$ROOT_DIR/.env" | tail -n 1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+resolve_path() {
+  local value="$1"
+  [[ "$value" = /* ]] && printf '%s\n' "$value" || printf '%s/%s\n' "$ROOT_DIR" "${value#./}"
+}
+
 BACKUP_DIR="$(realpath "$1")"
-DATA_ROOT="${DATA_ROOT:-$ROOT_DIR/data}"
+DATA_ROOT="${DATA_ROOT:-$(dotenv_value DATA_ROOT)}"
+DATA_ROOT="$(resolve_path "${DATA_ROOT:-./data}")"
 
 [[ -f "$BACKUP_DIR/mysql.sql.gz" ]] || { echo "mysql.sql.gz not found" >&2; exit 4; }
 if [[ -f "$BACKUP_DIR/SHA256SUMS" ]]; then
