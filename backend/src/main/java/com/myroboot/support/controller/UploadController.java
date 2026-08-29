@@ -133,18 +133,16 @@ public class UploadController {
         if (exists("SELECT COUNT(*) FROM upload_staging WHERE storage_name=? AND user_id=? AND expires_time>NOW()",
                 filename, session.userId())) return true;
 
-        // 启用的问题库附件对所有已登录客户可见。
         if (exists("SELECT COUNT(*) FROM faq_attachment a JOIN faq f ON f.id=a.faq_id WHERE a.file_url=? AND f.enabled=1", url)) return true;
         if (exists("SELECT COUNT(*) FROM faq_image i JOIN faq f ON f.id=i.faq_id WHERE i.image_url=? AND f.enabled=1", url)) return true;
 
-        // 工单文件只允许所属客户本人查看。
-        if (exists("SELECT COUNT(*) FROM support_ticket WHERE screenshot_url=? AND user_id=?", url, session.userId())) return true;
-        if (exists("SELECT COUNT(*) FROM ticket_attachment a JOIN support_ticket t ON t.id=a.ticket_id WHERE a.file_url=? AND t.user_id=?",
+        if (exists("SELECT COUNT(*) FROM support_ticket WHERE screenshot_url=? AND user_id=? AND is_deleted=0", url, session.userId())) return true;
+        if (exists("SELECT COUNT(*) FROM ticket_attachment a JOIN support_ticket t ON t.id=a.ticket_id WHERE a.file_url=? AND t.user_id=? AND t.is_deleted=0",
                 url, session.userId())) return true;
         return exists("SELECT COUNT(*) FROM ticket_history_attachment a " +
                         "JOIN support_ticket t ON t.id=a.ticket_id " +
                         "JOIN ticket_history h ON h.id=a.history_id " +
-                        "WHERE a.file_url=? AND t.user_id=? AND h.visible_to_customer=1",
+                        "WHERE a.file_url=? AND t.user_id=? AND t.is_deleted=0 AND h.visible_to_customer=1",
                 url, session.userId());
     }
 
