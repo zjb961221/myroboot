@@ -38,7 +38,7 @@ async function loadTickets() { tickets.value = await request(`${apiBase}/admin/t
 async function loadAdminFaqs() { adminFaqs.value = await request(`${apiBase}/admin/faqs`) }
 async function loadUsers() { users.value = await request(`${apiBase}/admin/users`) }
 
-function statusText(v) { return { pending: '待处理', processing: '处理中', resolved: '已解决' }[v] || v }
+function statusText(v) { return { pending: '待处理', processing: '处理中', resolved: '已解决', cancelled: '已撤销' }[v] || v }
 function formatTime(v) { return v ? String(v).replace('T', ' ').slice(0, 19) : '-' }
 function fileSize(v) { const n = Number(v || 0); if (n < 1024) return `${n} B`; if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`; return `${(n / 1048576).toFixed(1)} MB` }
 function isVideo(f) { return String(f.contentType || f.content_type || '').startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name || f.original_name || '') }
@@ -48,6 +48,14 @@ async function setTicketProcessing(ticket) {
   try {
     await request(`${apiBase}/admin/tickets/${ticket.id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'processing' }) })
     await loadTickets(); showToast('工单已进入处理中', 'success')
+  } catch (e) { showToast(e.message) }
+}
+async function deleteTicket(ticket) {
+  if (!window.confirm(`确定删除工单 #${ticket.id} 吗？\n删除后将从正常列表隐藏，但系统会保留审计数据和附件，不会物理销毁。`)) return
+  try {
+    await request(`${apiBase}/admin/tickets/${ticket.id}`, { method: 'DELETE' })
+    await loadTickets()
+    showToast(`工单 #${ticket.id} 已删除`, 'success')
   } catch (e) { showToast(e.message) }
 }
 
@@ -186,7 +194,7 @@ onMounted(async () => {
             <td>{{ticket.customer_name||'-'}}<br><small>{{ticket.mine_name||'-'}}</small></td>
             <td>{{ticket.category||'-'}}</td><td class="desc-cell">{{ticket.description}}</td>
             <td>{{ticket.attachments?.length||0}} 个</td><td><span class="status-pill" :class="ticket.status">{{statusText(ticket.status)}}</span></td>
-            <td class="row-actions"><button v-if="ticket.status==='pending'" class="secondary small-btn" @click="setTicketProcessing(ticket)">开始处理</button><a class="primary link-button small-btn" :href="`/admin/ticket-detail?id=${ticket.id}`">处理 / 回执</a></td>
+            <td class="row-actions"><button v-if="ticket.status==='pending'" class="secondary small-btn" @click="setTicketProcessing(ticket)">开始处理</button><a class="primary link-button small-btn" :href="`/admin/ticket-detail?id=${ticket.id}`">{{ticket.status==='cancelled'?'查看详情':'处理 / 回执'}}</a><button class="danger small-btn" @click="deleteTicket(ticket)">删除</button></td>
           </tr>
         </tbody></table></div>
       </section>
