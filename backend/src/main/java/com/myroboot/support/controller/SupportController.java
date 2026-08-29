@@ -69,10 +69,29 @@ public class SupportController {
         return ticketService.listMine(requireUser(authorization));
     }
 
+    @PostMapping("/tickets/{id}/cancel")
+    public Map<String, Object> cancelTicket(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            return Map.of("success", ticketService.cancel(requireUser(authorization), id, body == null ? Map.of() : body));
+        } catch (SecurityException e) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, e.getMessage());
+        }
+    }
+
     @GetMapping("/admin/tickets")
     public List<Map<String, Object>> listTickets(@RequestHeader(value = "Authorization", required = false) String authorization) {
         requireAdmin(authorization);
         return ticketService.listAdmin();
+    }
+
+    @DeleteMapping("/admin/tickets/{id}")
+    public Map<String, Object> deleteTicket(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable Long id) {
+        return Map.of("success", ticketService.delete(requireAdmin(authorization), id));
     }
 
     @PutMapping("/admin/tickets/{id}/status")
