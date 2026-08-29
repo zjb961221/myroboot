@@ -44,15 +44,65 @@ public class TicketService {
 
     public List<Map<String, Object>> listMine(AuthService.Session session) {
         return enrichAttachments(jdbcTemplate.queryForList(
-                "SELECT id,customer_name,mine_name,category,description,screenshot_url,status,resolution_reason,resolution_result,resolved_time,create_time " +
-                        "FROM support_ticket WHERE user_id=? ORDER BY id DESC LIMIT 100", session.userId()));
+                "SELECT id,customer_name,mine_name,category,description,screenshot_url,status,resolution_reason,resolution_result,resolved_time," +
+                        "cancel_reason,cancelled_time,create_time FROM support_ticket WHERE user_id=? AND is_deleted=0 ORDER BY id DESC LIMIT 100",
+                session.userId()));
     }
 
     public List<Map<String, Object>> listAdmin() {
         return enrichAttachments(jdbcTemplate.queryForList(
                 "SELECT t.id,t.user_id,t.customer_name,t.mine_name,t.category,t.description,t.screenshot_url,t.status," +
-                        "t.resolution_reason,t.resolution_result,t.resolved_time,t.create_time,u.username,u.display_name " +
-                        "FROM support_ticket t LEFT JOIN support_user u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 300"));
+                        "t.resolution_reason,t.resolution_result,t.resolved_time,t.cancel_reason,t.cancelled_time,t.create_time,u.username,u.display_name " +
+                        "FROM support_ticket t LEFT JOIN support_user u ON u.id=t.user_id WHERE t.is_deleted=0 ORDER BY t.id DESC LIMIT 300"));
+    }
+
+    @Transactional
+    public boolean cancel(AuthService.Session customer, Long id, Map<String, Object> body) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id,user_id,status,is_deleted FROM support_ticket WHERE id=? FOR UPDATE", id);
+        if (rows.isEmpty()) throw new IllegalArgumentException("工单不存在");
+        Map<String, Object> row = rows.get(0);
+        Long ownerId = row.get("user_id") instanceof Number n ? n.longValue() : null;
+        if (ownerId == null || !ownerId.equals(customer.userId())) throw new SecurityException("只能撤销自己提交的工单");
+        if (((Number) row.get("is_deleted")).intValue() == 1) throw new IllegalArgumentException("工单已删除，无法撤销");
+        String status = text(row.get("status"));
+        if ("resolved".equals(status)) throw new IllegalArgumentException("已解决的工单不能撤销");
+        if ("cancelled".equals(status)) throw new IllegalArgumentException("该工单已经撤销");
+        if (!List.of("pending", "processing").contains(status)) throw new IllegalArgumentException("当前工单状态不能撤销");
+
+        String reason = text(body == null ? null : body.get("reason"));
+        if (reason.isBlank()) reason = "客户主动撤销工单";
+        if (reason.length() > 500) throw new IllegalArgumentException("撤销原因不能超过 500 个字符");
+
+        int updated = jdbcTemplate.update(
+                "UPDATE support_ticket SET status='cancelled',cancel_reason=?,cancelled_time=NOW() WHERE id=? AND user_id=? AND is_deleted=0",
+                reason, id, customer.userId());
+        if (updated > 0) {
+            jdbcTemplate.update(
+                    "INSERT INTO ticket_history(ticket_id,operator_user_id,operator_name,action_type,content,visible_to_customer) VALUES (?,?,?,?,?,1)",
+                    id, customer.userId(), operatorName(customer), "cancelled", "客户撤销工单：" + reason);
+            log.info("TICKET_CANCELLED ticketId={} userId={}", id, customer.userId());
+        }
+        return updated > 0;
+    }
+
+    @Transactional
+    public boolean delete(AuthService.Session admin, Long id) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id,is_deleted FROM support_ticket WHERE id=? FOR UPDATE", id);
+        if (rows.isEmpty()) throw new IllegalArgumentException("工单不存在");
+        if (((Number) rows.get(0).get("is_deleted")).intValue() == 1) throw new IllegalArgumentException("该工单已经删除");
+
+        int updated = jdbcTemplate.update(
+                "UPDATE support_ticket SET is_deleted=1,deleted_time=NOW(),deleted_by=? WHERE id=? AND is_deleted=0",
+                admin.userId(), id);
+        if (updated > 0) {
+            jdbcTemplate.update(
+                    "INSERT INTO ticket_history(ticket_id,operator_user_id,operator_name,action_type,content,visible_to_customer) VALUES (?,?,?,?,?,0)",
+                    id, admin.userId(), operatorName(admin), "deleted", "管理员已将该工单移出正常列表");
+            log.info("TICKET_DELETED ticketId={} operatorUserId={}", id, admin.userId());
+        }
+        return updated > 0;
     }
 
     @Transactional
@@ -61,11 +111,16 @@ public class TicketService {
         if (!List.of("pending", "processing", "resolved").contains(status)) {
             throw new IllegalArgumentException("不支持的工单状态");
         }
+        Integer active = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM support_ticket WHERE id=? AND is_deleted=0", Integer.class, id);
+        if (active == null || active == 0) throw new IllegalArgumentException("工单不存在或已删除");
+        String current = jdbcTemplate.queryForObject("SELECT status FROM support_ticket WHERE id=?", String.class, id);
+        if ("cancelled".equals(current)) throw new IllegalArgumentException("已撤销工单不能继续处理");
+
         if ("resolved".equals(status)) {
             String reason = required(body, "resolutionReason", "标记已解决时必须填写具体原因");
             String result = required(body, "resolutionResult", "标记已解决时必须填写处理回执");
             int updated = jdbcTemplate.update(
-                    "UPDATE support_ticket SET status='resolved',resolution_reason=?,resolution_result=?,resolved_time=NOW() WHERE id=?",
+                    "UPDATE support_ticket SET status='resolved',resolution_reason=?,resolution_result=?,resolved_time=NOW() WHERE id=? AND is_deleted=0",
                     reason, result, id);
             if (updated > 0) {
                 jdbcTemplate.update(
@@ -77,7 +132,7 @@ public class TicketService {
         }
 
         int updated = jdbcTemplate.update(
-                "UPDATE support_ticket SET status=?,resolution_reason=NULL,resolution_result=NULL,resolved_time=NULL WHERE id=?",
+                "UPDATE support_ticket SET status=?,resolution_reason=NULL,resolution_result=NULL,resolved_time=NULL WHERE id=? AND is_deleted=0",
                 status, id);
         if (updated > 0) {
             String content = "processing".equals(status) ? "技术人员已开始处理" : "工单状态已调整为待处理";
