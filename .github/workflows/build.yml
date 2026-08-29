@@ -38,3 +38,12 @@ jobs:
         run: npm install
       - name: Build frontend
         run: npm run build
+
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
+      - name: Validate recovery scripts
+        run: bash -n scripts/migrate-volumes-to-local.sh scripts/backup-local.sh scripts/restore-backup.sh
