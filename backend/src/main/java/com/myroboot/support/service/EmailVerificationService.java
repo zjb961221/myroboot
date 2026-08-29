@@ -13,7 +13,10 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -55,7 +58,7 @@ public class EmailVerificationService {
         List<Map<String, Object>> recent = jdbcTemplate.queryForList(
                 "SELECT create_time FROM email_verification WHERE email=? AND purpose='register' ORDER BY id DESC LIMIT 1", email);
         if (!recent.isEmpty()) {
-            LocalDateTime created = ((java.sql.Timestamp) recent.get(0).get("create_time")).toLocalDateTime();
+            LocalDateTime created = toLocalDateTime(recent.get(0).get("create_time"), "create_time");
             if (created.plusSeconds(60).isAfter(LocalDateTime.now())) {
                 throw new AuthRateLimitService.RateLimitException("验证码发送过于频繁，请 60 秒后再试");
             }
@@ -97,12 +100,28 @@ public class EmailVerificationService {
                 "SELECT id, code_hash, expires_time FROM email_verification WHERE email=? AND purpose='register' AND used=0 ORDER BY id DESC LIMIT 1", email);
         if (rows.isEmpty()) throw new IllegalArgumentException("请先获取邮箱验证码");
         Map<String, Object> row = rows.get(0);
-        LocalDateTime expires = ((java.sql.Timestamp) row.get("expires_time")).toLocalDateTime();
+        LocalDateTime expires = toLocalDateTime(row.get("expires_time"), "expires_time");
         if (expires.isBefore(LocalDateTime.now())) throw new IllegalArgumentException("验证码已过期，请重新获取");
         if (!sha256(code == null ? "" : code.trim()).equals(String.valueOf(row.get("code_hash")))) {
             throw new IllegalArgumentException("验证码错误");
         }
         jdbcTemplate.update("UPDATE email_verification SET used=1 WHERE id=?", row.get("id"));
+    }
+
+    private LocalDateTime toLocalDateTime(Object value, String fieldName) {
+        if (value instanceof LocalDateTime localDateTime) return localDateTime;
+        if (value instanceof Timestamp timestamp) return timestamp.toLocalDateTime();
+        if (value instanceof OffsetDateTime offsetDateTime) return offsetDateTime.toLocalDateTime();
+        if (value instanceof Date date) return new Timestamp(date.getTime()).toLocalDateTime();
+        if (value instanceof CharSequence text) {
+            try {
+                return LocalDateTime.parse(text.toString().trim().replace(' ', 'T'));
+            } catch (Exception ignored) {
+                // fall through to a clear server-side error below
+            }
+        }
+        throw new IllegalStateException("验证码时间字段类型异常：" + fieldName + "=" +
+                (value == null ? "null" : value.getClass().getName()));
     }
 
     private void validateMailConfig() {
