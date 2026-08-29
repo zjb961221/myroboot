@@ -23,15 +23,23 @@ public class TicketService {
 
     @Transactional
     public Long create(AuthService.Session session, Map<String, Object> body) {
+        String customerName = required(body, "customerName", "请填写客户名称");
+        String mineName = required(body, "mineName", "请填写矿井名称");
         String category = required(body, "category", "请选择或填写问题类型");
+        String screenshotUrl = required(body, "screenshotUrl", "请上传故障截图");
         String description = required(body, "description", "请填写问题描述后再提交");
+        validateRequiredAttachments(body.get("attachments"));
+
+        if (customerName.length() > 200) throw new IllegalArgumentException("客户名称不能超过 200 个字符");
+        if (mineName.length() > 200) throw new IllegalArgumentException("矿井名称不能超过 200 个字符");
         if (category.length() > 100) throw new IllegalArgumentException("问题类型不能超过 100 个字符");
+        if (description.length() < 5) throw new IllegalArgumentException("问题描述太短，请至少写清楚现象或报错信息");
         if (description.length() > 20000) throw new IllegalArgumentException("问题描述过长，请精简后再提交，详细内容可放在附件中");
-        String customerName = valueOr(body.get("customerName"), session.companyName());
-        String mineName = valueOr(body.get("mineName"), session.mineName());
+        if (!screenshotUrl.startsWith("/api/uploads/")) throw new IllegalArgumentException("故障截图地址无效，请重新上传");
+
         jdbcTemplate.update(
                 "INSERT INTO support_ticket(user_id,customer_name,mine_name,category,description,screenshot_url) VALUES (?,?,?,?,?,?)",
-                session.userId(), customerName, mineName, category, description, body.get("screenshotUrl"));
+                session.userId(), customerName, mineName, category, description, screenshotUrl);
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         if (id == null) throw new IllegalStateException("工单创建失败");
         saveAttachments(id, body.get("attachments"));
@@ -162,6 +170,21 @@ public class TicketService {
         return rows;
     }
 
+    private void validateRequiredAttachments(Object rawAttachments) {
+        if (!(rawAttachments instanceof List<?> attachments) || attachments.isEmpty()) {
+            throw new IllegalArgumentException("请至少上传 1 个工单附件");
+        }
+        if (attachments.size() > 10) throw new IllegalArgumentException("一个工单最多上传 10 个附件");
+        for (Object raw : attachments) {
+            if (!(raw instanceof Map<?, ?> item)) throw new IllegalArgumentException("工单附件信息无效，请重新上传");
+            String url = text(item.get("url"));
+            String name = text(item.get("name"));
+            if (url.isBlank() || name.isBlank() || !url.startsWith("/api/uploads/")) {
+                throw new IllegalArgumentException("工单附件信息无效，请重新上传");
+            }
+        }
+    }
+
     private void saveAttachments(Long ticketId, Object rawAttachments) {
         if (!(rawAttachments instanceof List<?> attachments)) return;
         int count = 0;
@@ -184,10 +207,6 @@ public class TicketService {
         String value = text(body.get(key));
         if (value.isBlank() || "null".equals(value)) throw new IllegalArgumentException(message);
         return value;
-    }
-    private String valueOr(Object value, String fallback) {
-        String text = text(value);
-        return text.isBlank() ? fallback : text;
     }
     private String operatorName(AuthService.Session session) {
         return session.displayName() == null || session.displayName().isBlank() ? session.username() : session.displayName();
