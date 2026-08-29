@@ -11,14 +11,14 @@ async function login() {
     if(!res.ok) throw new Error('用户名或密码错误')
     const data=await res.json()
     localStorage.setItem('support_token',data.token); localStorage.setItem('support_role',data.role); localStorage.setItem('support_username',data.username); localStorage.setItem('support_profile',JSON.stringify(data))
-    window.location.href=data.role==='admin'?'/admin':'/'
+    window.location.href=data.role==='admin'?'/admin':data.role==='processor'?'/processor':'/'
   } catch(e) { error.value=e.message || '登录失败' } finally { loading.value=false }
 }
 </script>
 <template>
   <main class="auth-page"><section class="auth-card">
     <span class="auth-badge">MYROBOOT SUPPORT</span><h1>技术支持服务平台</h1>
-    <p>先从问题库自助排查，确实无法解决时再提交工单。</p>
+    <p>客户可自助排查和提交工单；处理人员登录后进入自己的工单工作台。</p>
     <label>用户名<input v-model="form.username" @keyup.enter="login" placeholder="请输入用户名" /></label>
     <label>密码<input v-model="form.password" type="password" @keyup.enter="login" placeholder="请输入密码" /></label>
     <div v-if="error" class="error">{{ error }}</div>
