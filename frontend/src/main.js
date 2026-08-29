@@ -8,6 +8,7 @@ import TicketTimeline from './TicketTimeline.vue'
 import TicketShare from './TicketShare.vue'
 import FaqShare from './FaqShare.vue'
 import CustomerPortal from './CustomerPortal.vue'
+import ProcessorPortal from './ProcessorPortal.vue'
 import { installGlobalFeedback } from './uiFeedback'
 import './style.css'
 import './ui-extra.css'
@@ -30,10 +31,14 @@ if (path === '/share/ticket') {
   createApp(AdminUsers).mount('#app')
 } else if (path === '/admin/knowledge' && role === 'admin') {
   createApp(AdminKnowledge).mount('#app')
-} else if (path === '/ticket-detail' || path === '/admin/ticket-detail') {
+} else if ((path === '/ticket-detail' || path === '/admin/ticket-detail' || path === '/processor/ticket-detail') && ['admin','customer','processor'].includes(role)) {
   createApp(TicketTimeline).mount('#app')
-} else if (path.startsWith('/admin')) {
+} else if (path.startsWith('/admin') && role === 'admin') {
   createApp(App).mount('#app')
+} else if (path.startsWith('/processor') && role === 'processor') {
+  createApp(ProcessorPortal).mount('#app')
+} else if (role === 'processor') {
+  window.location.href = '/processor'
 } else {
   createApp(CustomerPortal).mount('#app')
 }
