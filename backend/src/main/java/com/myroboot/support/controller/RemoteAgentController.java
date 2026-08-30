@@ -1,5 +1,6 @@
 package com.myroboot.support.controller;
 
+import com.myroboot.support.remote.RemoteTerminalService;
 import com.myroboot.support.service.AuthService;
 import com.myroboot.support.service.RemoteAgentService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,10 +15,12 @@ import java.util.Map;
 public class RemoteAgentController {
     private final AuthService authService;
     private final RemoteAgentService remoteAgentService;
+    private final RemoteTerminalService remoteTerminalService;
 
-    public RemoteAgentController(AuthService authService, RemoteAgentService remoteAgentService) {
+    public RemoteAgentController(AuthService authService, RemoteAgentService remoteAgentService, RemoteTerminalService remoteTerminalService) {
         this.authService = authService;
         this.remoteAgentService = remoteAgentService;
+        this.remoteTerminalService = remoteTerminalService;
     }
 
     @GetMapping("/api/admin/remote/agents")
@@ -30,6 +33,13 @@ public class RemoteAgentController {
                                      @RequestBody Map<String,Object> body,
                                      HttpServletRequest request) {
         return remoteAgentService.create(requireAdmin(authorization), body, clientIp(request));
+    }
+
+    @PostMapping("/api/admin/remote/agents/{id}/terminal-ticket")
+    public Map<String,Object> terminalTicket(@RequestHeader(value="Authorization", required=false) String authorization,
+                                             @PathVariable Long id,
+                                             HttpServletRequest request) {
+        return remoteTerminalService.createTicket(requireAdmin(authorization), id, clientIp(request));
     }
 
     @PostMapping("/api/admin/remote/agents/{id}/rotate-token")
