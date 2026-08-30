@@ -44,8 +44,7 @@ public class TicketService {
                         "t.resolution_reason,t.resolution_result,t.resolved_time,t.cancel_reason,t.cancelled_time,t.create_time," +
                         "t.assigned_to,t.assigned_time," +
                         "u.username,u.display_name,COALESCE(NULLIF(u.display_name,''),u.username) AS submitter_name," +
-                        "COALESCE(NULLIF(p.display_name,''),p.username) AS assigned_name," +
-                        "COALESCE((SELECT h.operator_name FROM ticket_history h WHERE h.ticket_id=t.id AND h.action_type IN ('progress','resolved') ORDER BY h.id DESC LIMIT 1),NULLIF(p.display_name,''),p.username) AS handler_name " +
+                        "COALESCE(NULLIF(p.display_name,''),p.username) AS assigned_name " +
                         "FROM support_ticket t " +
                         "LEFT JOIN support_user u ON u.id=t.user_id " +
                         "LEFT JOIN support_user p ON p.id=t.assigned_to " +
