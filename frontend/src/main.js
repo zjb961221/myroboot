@@ -4,6 +4,7 @@ import Login from './Login.vue'
 import Register from './Register.vue'
 import AdminUsers from './AdminUsers.vue'
 import AdminKnowledge from './AdminKnowledge.vue'
+import AdminKnowledgePermissions from './AdminKnowledgePermissions.vue'
 import TicketTimeline from './TicketTimeline.vue'
 import TicketShare from './TicketShare.vue'
 import FaqShare from './FaqShare.vue'
@@ -14,31 +15,16 @@ import './style.css'
 import './ui-extra.css'
 
 installGlobalFeedback()
-
-const path = window.location.pathname
-const token = localStorage.getItem('support_token')
-const role = localStorage.getItem('support_role')
-
-if (path === '/share/ticket') {
-  createApp(TicketShare).mount('#app')
-} else if (path === '/share/faq') {
-  createApp(FaqShare).mount('#app')
-} else if (path === '/register') {
-  createApp(Register).mount('#app')
-} else if (!token) {
-  createApp(Login).mount('#app')
-} else if (path === '/admin/users/manage' && role === 'admin') {
-  createApp(AdminUsers).mount('#app')
-} else if (path === '/admin/knowledge' && role === 'admin') {
-  createApp(AdminKnowledge).mount('#app')
-} else if ((path === '/ticket-detail' || path === '/admin/ticket-detail' || path === '/processor/ticket-detail') && ['admin','customer','processor'].includes(role)) {
-  createApp(TicketTimeline).mount('#app')
-} else if (path.startsWith('/admin') && role === 'admin') {
-  createApp(App).mount('#app')
-} else if (path.startsWith('/processor') && role === 'processor') {
-  createApp(ProcessorPortal).mount('#app')
-} else if (role === 'processor') {
-  window.location.href = '/processor'
-} else {
-  createApp(CustomerPortal).mount('#app')
-}
+const path=window.location.pathname,token=localStorage.getItem('support_token'),role=localStorage.getItem('support_role')
+if(path==='/share/ticket')createApp(TicketShare).mount('#app')
+else if(path==='/share/faq')createApp(FaqShare).mount('#app')
+else if(path==='/register')createApp(Register).mount('#app')
+else if(!token)createApp(Login).mount('#app')
+else if(path==='/admin/users/manage'&&role==='admin')createApp(AdminUsers).mount('#app')
+else if(path==='/admin/knowledge'&&role==='admin')createApp(AdminKnowledge).mount('#app')
+else if(path==='/admin/knowledge-permissions'&&role==='admin')createApp(AdminKnowledgePermissions).mount('#app')
+else if((path==='/ticket-detail'||path==='/admin/ticket-detail'||path==='/processor/ticket-detail')&&['admin','customer','processor'].includes(role))createApp(TicketTimeline).mount('#app')
+else if(path.startsWith('/admin')&&role==='admin')createApp(App).mount('#app')
+else if(path.startsWith('/processor')&&role==='processor')createApp(ProcessorPortal).mount('#app')
+else if(role==='processor')window.location.href='/processor'
+else createApp(CustomerPortal).mount('#app')
