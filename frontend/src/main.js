@@ -5,6 +5,7 @@ import Register from './Register.vue'
 import AdminUsers from './AdminUsers.vue'
 import AdminKnowledge from './AdminKnowledge.vue'
 import AdminKnowledgePermissions from './AdminKnowledgePermissions.vue'
+import AdminRemote from './AdminRemote.vue'
 import TicketTimeline from './TicketTimeline.vue'
 import TicketShare from './TicketShare.vue'
 import FaqShare from './FaqShare.vue'
@@ -23,6 +24,7 @@ else if(!token)createApp(Login).mount('#app')
 else if(path==='/admin/users/manage'&&role==='admin')createApp(AdminUsers).mount('#app')
 else if(path==='/admin/knowledge'&&role==='admin')createApp(AdminKnowledge).mount('#app')
 else if(path==='/admin/knowledge-permissions'&&role==='admin')createApp(AdminKnowledgePermissions).mount('#app')
+else if(path==='/admin/remote'&&role==='admin')createApp(AdminRemote).mount('#app')
 else if((path==='/ticket-detail'||path==='/admin/ticket-detail'||path==='/processor/ticket-detail')&&['admin','customer','processor'].includes(role))createApp(TicketTimeline).mount('#app')
 else if(path.startsWith('/admin')&&role==='admin')createApp(App).mount('#app')
 else if(path.startsWith('/processor')&&role==='processor')createApp(ProcessorPortal).mount('#app')
