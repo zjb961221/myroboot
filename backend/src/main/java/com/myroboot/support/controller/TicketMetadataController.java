@@ -46,7 +46,7 @@ public class TicketMetadataController {
         Long assignedTo = nullableNumber(row.get("assigned_to"));
         boolean allowed = "admin".equals(session.role())
                 || ("customer".equals(session.role()) && ownerId == session.userId())
-                || ("processor".equals(session.role()) && assignedTo != null && assignedTo == session.userId());
+                || ("processor".equals(session.role()) && assignedTo != null && assignedTo.equals(session.userId()));
         if (!allowed) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权查看该工单");
 
         Map<String, Object> result = new LinkedHashMap<>();
