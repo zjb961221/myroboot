@@ -49,6 +49,7 @@ spring:
 
 support:
   public-base-url: ${SUPPORT_PUBLIC_BASE_URL:}
+  admin-notification-email: ${ADMIN_NOTIFICATION_EMAIL:${MAIL_FROM:${MAIL_USERNAME:}}}
   upload-dir: ${UPLOAD_DIR:/app/uploads}
   upload-cleanup-grace-hours: ${UPLOAD_CLEANUP_GRACE_HOURS:24}
   mail:
