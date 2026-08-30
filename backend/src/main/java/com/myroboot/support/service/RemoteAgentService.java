@@ -26,7 +26,7 @@ public class RemoteAgentService {
 
     public List<Map<String,Object>> list(AuthService.Session admin) {
         requireAdmin(admin);
-        List<Map<String,Object>> rows = jdbcTemplate.queryForList("""
+        return jdbcTemplate.queryForList("""
                 SELECT id,agent_id,name,mine_name,hostname,os_name,agent_version,private_ip,desktop_session,
                        enabled,last_seen,create_time,update_time,
                        CASE WHEN enabled=1 AND last_seen IS NOT NULL AND last_seen >= DATE_SUB(NOW(), INTERVAL 90 SECOND)
@@ -34,7 +34,6 @@ public class RemoteAgentService {
                 FROM remote_agent
                 ORDER BY online DESC, name, id
                 """);
-        return rows;
     }
 
     @Transactional
@@ -76,14 +75,18 @@ public class RemoteAgentService {
         audit(id, admin.userId(), enabled ? "agent_enabled" : "agent_disabled", enabled ? "启用远程 Agent" : "停用远程 Agent", clientIp);
     }
 
-    public Map<String,Object> heartbeat(String agentId, String token, Map<String,Object> body) {
+    public AgentIdentity authenticateAgent(String agentId, String token) {
         if (agentId == null || agentId.isBlank() || token == null || token.isBlank()) throw new SecurityException("Agent 身份信息缺失");
-        List<Map<String,Object>> rows = jdbcTemplate.queryForList("SELECT id,token_hash,enabled FROM remote_agent WHERE agent_id=? LIMIT 1", agentId);
+        List<Map<String,Object>> rows = jdbcTemplate.queryForList("SELECT id,agent_id,name,token_hash,enabled FROM remote_agent WHERE agent_id=? LIMIT 1", agentId);
         if (rows.isEmpty()) throw new SecurityException("Agent 未注册");
         Map<String,Object> row = rows.get(0);
         if (((Number)row.get("enabled")).intValue() != 1) throw new SecurityException("Agent 已停用");
         if (!constantTimeEquals(String.valueOf(row.get("token_hash")), sha256(token))) throw new SecurityException("Agent Token 无效");
+        return new AgentIdentity(((Number)row.get("id")).longValue(), String.valueOf(row.get("agent_id")), String.valueOf(row.get("name")));
+    }
 
+    public Map<String,Object> heartbeat(String agentId, String token, Map<String,Object> body) {
+        authenticateAgent(agentId, token);
         String hostname = limit(text(body.get("hostname")), 200);
         String osName = limit(text(body.get("osName")), 200);
         String version = limit(text(body.get("agentVersion")), 50);
@@ -147,4 +150,6 @@ public class RemoteAgentService {
     private String text(Object value) { return value == null ? "" : String.valueOf(value).trim(); }
     private String emptyToNull(String value) { return value == null || value.isBlank() ? null : value; }
     private String limit(String value, int max) { return value == null ? "" : value.substring(0, Math.min(value.length(), max)); }
+
+    public record AgentIdentity(Long id, String agentId, String name) {}
 }
