@@ -16,6 +16,12 @@ const full = ref(false)
 const selected = computed(() => agents.value.find(a => Number(a.id) === Number(agentId.value)))
 
 function headers(extra={}) { return { ...extra, Authorization:`Bearer ${token}` } }
+function guacamoleClientId(connectionId) {
+  return btoa(`${connectionId}\0c\0json`)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '')
+}
 async function request(url, options={}) {
   options.headers = headers(options.headers || {})
   const res = await fetch(url, options)
@@ -41,9 +47,10 @@ async function openDesktop() {
       body:JSON.stringify({username:username.value.trim(), password:password.value, port:Number(port.value)})
     })
     sessionId.value = grant.sessionId
-    frameUrl.value = `${grant.path}?data=${encodeURIComponent(grant.data)}`
+    const clientId = guacamoleClientId(grant.sessionId)
+    frameUrl.value = `${grant.path}?data=${encodeURIComponent(grant.data)}#/client/${encodeURIComponent(clientId)}`
     password.value = ''
-    showToast('远程桌面隧道已建立', 'success')
+    showToast('远程桌面隧道已建立，正在进入桌面', 'success')
   } catch (e) { showToast(e.message) }
   finally { opening.value = false }
 }
