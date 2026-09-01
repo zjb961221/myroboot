@@ -61,6 +61,10 @@ support:
     admin-password: ${ADMIN_PASSWORD:admin123}
     session-hours: ${AUTH_SESSION_HOURS:168}
     cookie-secure: ${SESSION_COOKIE_SECURE:false}
+  remote:
+    guacamole-json-secret: ${GUAC_JSON_SECRET_KEY:}
+    guacamole-path: ${GUACAMOLE_PATH:/guacamole/}
+    guacd-target-host: ${GUACD_TARGET_HOST:backend}
 
 logging:
   file:
