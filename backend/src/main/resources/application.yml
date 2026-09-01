@@ -1,0 +1,82 @@
+server:
+  port: 8080
+  forward-headers-strategy: framework
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/myroboot?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: ${DB_POOL_MIN:3}
+      connection-timeout: 10000
+      validation-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  mail:
+    protocol: smtp
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    default-encoding: UTF-8
+    test-connection: false
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          connectiontimeout: 8000
+          timeout: 8000
+          writetimeout: 8000
+          ssl:
+            enable: ${MAIL_SSL_ENABLE:true}
+          starttls:
+            enable: ${MAIL_STARTTLS_ENABLE:false}
+  servlet:
+    multipart:
+      max-file-size: 220MB
+      max-request-size: 240MB
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:data.sql
+
+support:
+  public-base-url: ${SUPPORT_PUBLIC_BASE_URL:}
+  admin-notification-email: ${ADMIN_NOTIFICATION_EMAIL:${MAIL_FROM:${MAIL_USERNAME:}}}
+  upload-dir: ${UPLOAD_DIR:/app/uploads}
+  upload-cleanup-grace-hours: ${UPLOAD_CLEANUP_GRACE_HOURS:24}
+  mail:
+    from: ${MAIL_FROM:${MAIL_USERNAME:}}
+  auth:
+    customer-username: ${CUSTOMER_USERNAME:customer}
+    customer-password: ${CUSTOMER_PASSWORD:customer123}
+    admin-username: ${ADMIN_USERNAME:admin}
+    admin-password: ${ADMIN_PASSWORD:admin123}
+    session-hours: ${AUTH_SESSION_HOURS:168}
+    cookie-secure: ${SESSION_COOKIE_SECURE:false}
+  remote:
+    guacamole-json-secret: ${GUAC_JSON_SECRET_KEY:}
+    guacamole-path: ${GUACAMOLE_PATH:/guacamole/}
+    guacd-target-host: ${GUACD_TARGET_HOST:backend}
+
+logging:
+  file:
+    name: ${LOG_FILE:/app/logs/support.log}
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{36} - %msg%n"
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 14
+      total-size-cap: 500MB
+  level:
+    root: INFO
+    org.springframework.jdbc.core: INFO

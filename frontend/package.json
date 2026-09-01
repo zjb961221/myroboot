@@ -1,0 +1,20 @@
+{
+  "name": "myroboot-frontend",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "latest",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "quill": "^2.0.3",
+    "vite": "latest",
+    "vue": "latest"
+  },
+  "devDependencies": {}
+}
