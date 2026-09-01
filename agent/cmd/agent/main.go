@@ -1,23 +1,180 @@
 package main
-import("bytes";"context";"encoding/base64";"encoding/json";"fmt";"io";"log";"net";"net/http";"os";"os/exec";"path/filepath";"regexp";"runtime";"sort";"strings";"sync";"time";"github.com/gorilla/websocket")
-const version="0.3.0";const prompt="myroboot> ";var safeUnit=regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,100}$`)
-type heartbeat struct{Hostname string`json:"hostname"`;OSName string`json:"osName"`;AgentVersion string`json:"agentVersion"`;PrivateIP string`json:"privateIp"`;DesktopSession string`json:"desktopSession"`}
-type wsMessage struct{Type string`json:"type"`;SessionID string`json:"sessionId,omitempty"`;RequestID string`json:"requestId,omitempty"`;Data string`json:"data,omitempty"`;Path string`json:"path,omitempty"`;Overwrite bool`json:"overwrite,omitempty"`;Cols int`json:"cols,omitempty"`;Rows int`json:"rows,omitempty"`;Message string`json:"message,omitempty"`}
-type consoleSession struct{line strings.Builder};var sessionsMu sync.Mutex;var sessions=map[string]*consoleSession{};var wsWriteMu sync.Mutex
-func main(){server:=strings.TrimRight(os.Getenv("MYROBOOT_SERVER"),"/");id:=strings.TrimSpace(os.Getenv("MYROBOOT_AGENT_ID"));token:=strings.TrimSpace(os.Getenv("MYROBOOT_AGENT_TOKEN"));if server==""||id==""||token==""{log.Fatal("MYROBOOT_SERVER, MYROBOOT_AGENT_ID and MYROBOOT_AGENT_TOKEN are required")};log.Printf("myroboot-agent %s starting, server=%s agentId=%s",version,server,id);go heartbeatLoop(&http.Client{Timeout:15*time.Second},server,id,token);realtimeLoop(server,id,token)}
-func realtimeLoop(server,id,token string){for{if err:=runRealtime(server,id,token);err!=nil{log.Printf("realtime channel disconnected: %v",err)};sessionsMu.Lock();sessions=map[string]*consoleSession{};sessionsMu.Unlock();time.Sleep(5*time.Second)}}
-func runRealtime(server,id,token string)error{url:=websocketURL(server)+"/api/remote/ws/agent";h:=http.Header{};h.Set("X-Agent-Id",id);h.Set("X-Agent-Token",token);c,r,e:=(&websocket.Dialer{HandshakeTimeout:15*time.Second}).Dial(url,h);if e!=nil{if r!=nil{return fmt.Errorf("websocket dial %s: %s",url,r.Status)};return e};defer c.Close();c.SetReadLimit(80*1024*1024);log.Printf("realtime channel connected: %s",url);for{var m wsMessage;if e:=c.ReadJSON(&m);e!=nil{return e};switch m.Type{case"terminal_open":openConsole(c,m.SessionID);case"terminal_input":handleConsoleInput(c,m.SessionID,m.Data);case"terminal_close":closeConsole(c,m.SessionID);case"file_list":fileList(c,m);case"file_download":fileDownload(c,m);case"file_upload":fileUpload(c,m);case"file_mkdir":fileMkdir(c,m)}}}
-func validPath(p string)(string,error){if p==""{p="/"};p=filepath.Clean(p);if !filepath.IsAbs(p){return"",fmt.Errorf("必须使用绝对路径")};return p,nil}
-func fileList(c *websocket.Conn,m wsMessage){p,e:=validPath(m.Path);if e!=nil{fileErr(c,m,e);return};es,e:=os.ReadDir(p);if e!=nil{fileErr(c,m,e);return};items:=make([]map[string]any,0,len(es));for _,x:=range es{i,e:=x.Info();if e!=nil{continue};items=append(items,map[string]any{"name":x.Name(),"dir":x.IsDir(),"size":i.Size(),"mode":i.Mode().String(),"modified":i.ModTime().Format(time.RFC3339)})};sort.Slice(items,func(i,j int)bool{di:=items[i]["dir"].(bool);dj:=items[j]["dir"].(bool);if di!=dj{return di};return strings.ToLower(items[i]["name"].(string))<strings.ToLower(items[j]["name"].(string))});writeWS(c,map[string]any{"type":"file_list_result","requestId":m.RequestID,"ok":true,"path":p,"items":items})}
-func fileDownload(c *websocket.Conn,m wsMessage){p,e:=validPath(m.Path);if e!=nil{fileErr(c,m,e);return};i,e:=os.Stat(p);if e!=nil||i.IsDir(){if e==nil{e=fmt.Errorf("不能下载目录")};fileErr(c,m,e);return};if i.Size()>50*1024*1024{fileErr(c,m,fmt.Errorf("单文件暂限制 50MB"));return};b,e:=os.ReadFile(p);if e!=nil{fileErr(c,m,e);return};writeWS(c,map[string]any{"type":"file_download_result","requestId":m.RequestID,"ok":true,"name":filepath.Base(p),"size":len(b),"data":base64.StdEncoding.EncodeToString(b)})}
-func fileUpload(c *websocket.Conn,m wsMessage){p,e:=validPath(m.Path);if e!=nil{fileErr(c,m,e);return};if !m.Overwrite{if _,e=os.Stat(p);e==nil{fileErr(c,m,fmt.Errorf("目标文件已存在"));return}};b,e:=base64.StdEncoding.DecodeString(m.Data);if e!=nil||len(b)>50*1024*1024{if e==nil{e=fmt.Errorf("单文件暂限制 50MB")};fileErr(c,m,e);return};if e=os.MkdirAll(filepath.Dir(p),0755);e==nil{e=os.WriteFile(p,b,0644)};if e!=nil{fileErr(c,m,e);return};writeWS(c,map[string]any{"type":"file_upload_result","requestId":m.RequestID,"ok":true,"path":p,"size":len(b)})}
-func fileMkdir(c *websocket.Conn,m wsMessage){p,e:=validPath(m.Path);if e==nil{e=os.Mkdir(p,0755)};if e!=nil{fileErr(c,m,e);return};writeWS(c,map[string]any{"type":"file_mkdir_result","requestId":m.RequestID,"ok":true,"path":p})}
-func fileErr(c *websocket.Conn,m wsMessage,e error){writeWS(c,map[string]any{"type":m.Type+"_result","requestId":m.RequestID,"ok":false,"message":e.Error()})}
+
+import (
+    "bytes"
+    "context"
+    "encoding/base64"
+    "encoding/json"
+    "fmt"
+    "io"
+    "log"
+    "net"
+    "net/http"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "regexp"
+    "runtime"
+    "sort"
+    "strings"
+    "sync"
+    "time"
+
+    "github.com/gorilla/websocket"
+)
+
+const version = "0.4.0"
+const prompt = "myroboot> "
+const desktopChunkSize = 16 * 1024
+
+var safeUnit = regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,100}$`)
+
+type heartbeat struct {
+    Hostname string `json:"hostname"`
+    OSName string `json:"osName"`
+    AgentVersion string `json:"agentVersion"`
+    PrivateIP string `json:"privateIp"`
+    DesktopSession string `json:"desktopSession"`
+}
+
+type wsMessage struct {
+    Type string `json:"type"`
+    SessionID string `json:"sessionId,omitempty"`
+    RequestID string `json:"requestId,omitempty"`
+    Data string `json:"data,omitempty"`
+    Path string `json:"path,omitempty"`
+    Overwrite bool `json:"overwrite,omitempty"`
+    Cols int `json:"cols,omitempty"`
+    Rows int `json:"rows,omitempty"`
+    Port int `json:"port,omitempty"`
+    Message string `json:"message,omitempty"`
+}
+
+type consoleSession struct { line strings.Builder }
+
+var (
+    sessionsMu sync.Mutex
+    sessions = map[string]*consoleSession{}
+    wsWriteMu sync.Mutex
+    desktopMu sync.Mutex
+    desktopConns = map[string]net.Conn{}
+)
+
+func main() {
+    server := strings.TrimRight(os.Getenv("MYROBOOT_SERVER"), "/")
+    agentID := strings.TrimSpace(os.Getenv("MYROBOOT_AGENT_ID"))
+    token := strings.TrimSpace(os.Getenv("MYROBOOT_AGENT_TOKEN"))
+    if server == "" || agentID == "" || token == "" {
+        log.Fatal("MYROBOOT_SERVER, MYROBOOT_AGENT_ID and MYROBOOT_AGENT_TOKEN are required")
+    }
+    log.Printf("myroboot-agent %s starting, server=%s agentId=%s", version, server, agentID)
+    go heartbeatLoop(&http.Client{Timeout: 15 * time.Second}, server, agentID, token)
+    realtimeLoop(server, agentID, token)
+}
+
+func realtimeLoop(server, agentID, token string) {
+    for {
+        if err := runRealtime(server, agentID, token); err != nil { log.Printf("realtime channel disconnected: %v", err) }
+        sessionsMu.Lock(); sessions = map[string]*consoleSession{}; sessionsMu.Unlock()
+        desktopMu.Lock(); for id, c := range desktopConns { _ = c.Close(); delete(desktopConns, id) }; desktopMu.Unlock()
+        time.Sleep(5 * time.Second)
+    }
+}
+
+func runRealtime(server, agentID, token string) error {
+    url := websocketURL(server) + "/api/remote/ws/agent"
+    headers := http.Header{}
+    headers.Set("X-Agent-Id", agentID)
+    headers.Set("X-Agent-Token", token)
+    conn, resp, err := (&websocket.Dialer{HandshakeTimeout: 15 * time.Second}).Dial(url, headers)
+    if err != nil { if resp != nil { return fmt.Errorf("websocket dial %s: %s", url, resp.Status) }; return err }
+    defer conn.Close()
+    conn.SetReadLimit(80 * 1024 * 1024)
+    log.Printf("realtime channel connected: %s", url)
+    for {
+        var msg wsMessage
+        if err := conn.ReadJSON(&msg); err != nil { return err }
+        switch msg.Type {
+        case "terminal_open": openConsole(conn, msg.SessionID)
+        case "terminal_input": handleConsoleInput(conn, msg.SessionID, msg.Data)
+        case "terminal_close": closeConsole(conn, msg.SessionID)
+        case "file_list": fileList(conn, msg)
+        case "file_download": fileDownload(conn, msg)
+        case "file_upload": fileUpload(conn, msg)
+        case "file_mkdir": fileMkdir(conn, msg)
+        case "desktop_tunnel_open": openDesktopTunnel(conn, msg.SessionID, msg.Port)
+        case "desktop_tunnel_data": desktopTunnelWrite(conn, msg.SessionID, msg.Data)
+        case "desktop_tunnel_close": closeDesktopTunnel(conn, msg.SessionID, false)
+        }
+    }
+}
+
+func openDesktopTunnel(ws *websocket.Conn, sessionID string, port int) {
+    if sessionID == "" { return }
+    if port < 3389 || port > 3399 {
+        _ = writeWS(ws, wsMessage{Type:"desktop_tunnel_error", SessionID:sessionID, Message:"desktop port is outside allowed GNOME RDP range 3389-3399"})
+        return
+    }
+    go func() {
+        target := fmt.Sprintf("127.0.0.1:%d", port)
+        conn, err := net.DialTimeout("tcp", target, 8*time.Second)
+        if err != nil {
+            _ = writeWS(ws, wsMessage{Type:"desktop_tunnel_error", SessionID:sessionID, Message:"无法连接本机 GNOME Remote Desktop：" + err.Error()})
+            return
+        }
+        desktopMu.Lock()
+        if old := desktopConns[sessionID]; old != nil { _ = old.Close() }
+        desktopConns[sessionID] = conn
+        desktopMu.Unlock()
+        _ = writeWS(ws, wsMessage{Type:"desktop_tunnel_ready", SessionID:sessionID})
+        log.Printf("desktop tunnel connected session=%s target=%s", shortID(sessionID), target)
+
+        buf := make([]byte, desktopChunkSize)
+        for {
+            n, err := conn.Read(buf)
+            if n > 0 {
+                payload := base64.StdEncoding.EncodeToString(buf[:n])
+                if e := writeWS(ws, wsMessage{Type:"desktop_tunnel_data", SessionID:sessionID, Data:payload}); e != nil { err = e }
+            }
+            if err != nil { break }
+        }
+        closeDesktopTunnel(ws, sessionID, true)
+    }()
+}
+
+func desktopTunnelWrite(ws *websocket.Conn, sessionID, data string) {
+    raw, err := base64.StdEncoding.DecodeString(data)
+    if err != nil { _ = writeWS(ws, wsMessage{Type:"desktop_tunnel_error", SessionID:sessionID, Message:"invalid desktop tunnel data"}); return }
+    desktopMu.Lock(); conn := desktopConns[sessionID]; desktopMu.Unlock()
+    if conn == nil { return }
+    if _, err := conn.Write(raw); err != nil { closeDesktopTunnel(ws, sessionID, true) }
+}
+
+func closeDesktopTunnel(ws *websocket.Conn, sessionID string, notify bool) {
+    desktopMu.Lock(); conn := desktopConns[sessionID]; delete(desktopConns, sessionID); desktopMu.Unlock()
+    if conn != nil { _ = conn.Close() }
+    if notify { _ = writeWS(ws, wsMessage{Type:"desktop_tunnel_closed", SessionID:sessionID}) }
+}
+
+func validPath(p string) (string,error) { if p=="" {p="/"}; p=filepath.Clean(p); if !filepath.IsAbs(p){return "",fmt.Errorf("必须使用绝对路径")}; return p,nil }
+func fileList(c *websocket.Conn,m wsMessage){p,e:=validPath(m.Path);if e!=nil{fileErr(c,m,e);return};es,e:=os.ReadDir(p);if e!=nil{fileErr(c,m,e);return};items:=make([]map[string]any,0,len(es));for _,x:=range es{i,e:=x.Info();if e!=nil{continue};items=append(items,map[string]any{"name":x.Name(),"dir":x.IsDir(),"size":i.Size(),"mode":i.Mode().String(),"modified":i.ModTime().Format(time.RFC3339)})};sort.Slice(items,func(i,j int)bool{di:=items[i]["dir"].(bool);dj:=items[j]["dir"].(bool);if di!=dj{return di};return strings.ToLower(items[i]["name"].(string))<strings.ToLower(items[j]["name"].(string))});_ = writeWS(c,map[string]any{"type":"file_list_result","requestId":m.RequestID,"ok":true,"path":p,"items":items})}
+func fileDownload(c *websocket.Conn,m wsMessage){p,e:=validPath(m.Path);if e!=nil{fileErr(c,m,e);return};i,e:=os.Stat(p);if e!=nil||i.IsDir(){if e==nil{e=fmt.Errorf("不能下载目录")};fileErr(c,m,e);return};if i.Size()>50*1024*1024{fileErr(c,m,fmt.Errorf("单文件暂限制 50MB"));return};b,e:=os.ReadFile(p);if e!=nil{fileErr(c,m,e);return};_ = writeWS(c,map[string]any{"type":"file_download_result","requestId":m.RequestID,"ok":true,"name":filepath.Base(p),"size":len(b),"data":base64.StdEncoding.EncodeToString(b)})}
+func fileUpload(c *websocket.Conn,m wsMessage){p,e:=validPath(m.Path);if e!=nil{fileErr(c,m,e);return};if !m.Overwrite{if _,e=os.Stat(p);e==nil{fileErr(c,m,fmt.Errorf("目标文件已存在"));return}};b,e:=base64.StdEncoding.DecodeString(m.Data);if e!=nil||len(b)>50*1024*1024{if e==nil{e=fmt.Errorf("单文件暂限制 50MB")};fileErr(c,m,e);return};if e=os.MkdirAll(filepath.Dir(p),0755);e==nil{e=os.WriteFile(p,b,0644)};if e!=nil{fileErr(c,m,e);return};_ = writeWS(c,map[string]any{"type":"file_upload_result","requestId":m.RequestID,"ok":true,"path":p,"size":len(b)})}
+func fileMkdir(c *websocket.Conn,m wsMessage){p,e:=validPath(m.Path);if e==nil{e=os.Mkdir(p,0755)};if e!=nil{fileErr(c,m,e);return};_ = writeWS(c,map[string]any{"type":"file_mkdir_result","requestId":m.RequestID,"ok":true,"path":p})}
+func fileErr(c *websocket.Conn,m wsMessage,e error){_ = writeWS(c,map[string]any{"type":m.Type+"_result","requestId":m.RequestID,"ok":false,"message":e.Error()})}
+
 func openConsole(c *websocket.Conn,id string){if id==""{return};sessionsMu.Lock();sessions[id]=&consoleSession{};sessionsMu.Unlock();sendOutput(c,id,"MYROBOOT Remote Diagnostic Console\r\n当前为受控运维终端，只提供只读诊断命令。输入 help 查看可用命令。\r\n\r\n"+prompt)}
 func handleConsoleInput(c *websocket.Conn,id,data string){sessionsMu.Lock();s:=sessions[id];sessionsMu.Unlock();if s==nil{return};for _,r:=range data{switch r{case'\r','\n':line:=strings.TrimSpace(s.line.String());s.line.Reset();sendOutput(c,id,"\r\n");if line=="exit"{closeConsole(c,id);return};if line!=""{o:=executeSafeCommand(line);sendOutput(c,id,o);if !strings.HasSuffix(o,"\n"){sendOutput(c,id,"\r\n")}};sendOutput(c,id,prompt);case 3:s.line.Reset();sendOutput(c,id,"^C\r\n"+prompt);case 8,127:q:=[]rune(s.line.String());if len(q)>0{s.line.Reset();s.line.WriteString(string(q[:len(q)-1]));sendOutput(c,id,"\b \b")};default:if r>=32{s.line.WriteRune(r);sendOutput(c,id,string(r))}}}}
-func closeConsole(c *websocket.Conn,id string){sessionsMu.Lock();delete(sessions,id);sessionsMu.Unlock();writeWS(c,wsMessage{Type:"terminal_closed",SessionID:id})}
+func closeConsole(c *websocket.Conn,id string){sessionsMu.Lock();delete(sessions,id);sessionsMu.Unlock();_ = writeWS(c,wsMessage{Type:"terminal_closed",SessionID:id})}
 func executeSafeCommand(line string)string{f:=strings.Fields(line);if len(f)==0{return""};switch f[0]{case"help":return"可用命令:\r\n  help clear hostname uptime uname df free ip addr ip route docker ps systemctl status <service> journalctl <service> exit\r\n";case"clear":return"\x1b[2J\x1b[H";case"hostname":h,_:=os.Hostname();return h+"\r\n";case"uptime":if len(f)==1{return runFixed("uptime")};case"uname":if len(f)==1{return runFixed("uname","-a")};case"df":if len(f)==1{return runFixed("df","-h")};case"free":if len(f)==1{return runFixed("free","-h")};case"ip":if len(f)==2&&(f[1]=="addr"||f[1]=="route"){return runFixed("ip",f[1])};case"docker":if len(f)==2&&f[1]=="ps"{return runFixed("docker","ps","--no-trunc")};case"systemctl":if len(f)==3&&f[1]=="status"&&safeUnit.MatchString(f[2]){return runFixed("systemctl","status",f[2],"--no-pager","--full")};case"journalctl":if len(f)==2&&safeUnit.MatchString(f[1]){return runFixed("journalctl","-u",f[1],"-n","200","--no-pager")}};return"该命令当前未开放。输入 help 查看允许的只读诊断命令。\r\n"}
 func runFixed(n string,a ...string)string{ctx,c:=context.WithTimeout(context.Background(),20*time.Second);defer c();o,e:=exec.CommandContext(ctx,n,a...).CombinedOutput();if len(o)>1024*1024{o=o[:1024*1024]};t:=strings.ReplaceAll(string(o),"\n","\r\n");if ctx.Err()==context.DeadlineExceeded{return t+"\r\n命令执行超时。\r\n"};if e!=nil&&t==""{return"执行失败: "+e.Error()+"\r\n"};return t}
-func sendOutput(c *websocket.Conn,id,t string){writeWS(c,wsMessage{Type:"terminal_output",SessionID:id,Data:base64.StdEncoding.EncodeToString([]byte(t))})};func writeWS(c *websocket.Conn,v any)error{wsWriteMu.Lock();defer wsWriteMu.Unlock();return c.WriteJSON(v)}
-func heartbeatLoop(c *http.Client,s,id,t string){for{if e:=sendHeartbeat(c,s,id,t);e!=nil{log.Printf("heartbeat failed: %v",e)};time.Sleep(30*time.Second)}};func sendHeartbeat(c *http.Client,s,id,t string)error{h,_:=os.Hostname();p:=heartbeat{h,readOSName(),version,privateIP(),desktopSession()};b,_:=json.Marshal(p);r,e:=http.NewRequest(http.MethodPost,s+"/api/remote/agent/heartbeat",bytes.NewReader(b));if e!=nil{return e};r.Header.Set("Content-Type","application/json");r.Header.Set("X-Agent-Id",id);r.Header.Set("X-Agent-Token",t);x,e:=c.Do(r);if e!=nil{return e};defer x.Body.Close();if x.StatusCode/100!=2{b,_:=io.ReadAll(io.LimitReader(x.Body,2048));return fmt.Errorf("server returned %s: %s",x.Status,strings.TrimSpace(string(b)))};return nil}
-func websocketURL(s string)string{if strings.HasPrefix(s,"https://"){return"wss://"+strings.TrimPrefix(s,"https://")};if strings.HasPrefix(s,"http://"){return"ws://"+strings.TrimPrefix(s,"http://")};return s};func readOSName()string{b,e:=os.ReadFile("/etc/os-release");if e!=nil{return runtime.GOOS};for _,l:=range strings.Split(string(b),"\n"){if strings.HasPrefix(l,"PRETTY_NAME="){return strings.Trim(strings.TrimPrefix(l,"PRETTY_NAME="),"\"")}};return runtime.GOOS};func privateIP()string{is,e:=net.Interfaces();if e!=nil{return""};for _,i:=range is{if i.Flags&net.FlagUp==0||i.Flags&net.FlagLoopback!=0{continue};as,_:=i.Addrs();for _,a:=range as{var p net.IP;switch v:=a.(type){case *net.IPNet:p=v.IP;case *net.IPAddr:p=v.IP};if p!=nil&&p.To4()!=nil&&p.IsPrivate(){return p.String()}}};return""};func desktopSession()string{if v:=strings.TrimSpace(os.Getenv("XDG_SESSION_TYPE"));v!=""{return v};return"unknown"}
+func sendOutput(c *websocket.Conn,id,t string){_ = writeWS(c,wsMessage{Type:"terminal_output",SessionID:id,Data:base64.StdEncoding.EncodeToString([]byte(t))})}
+func writeWS(c *websocket.Conn,v any)error{wsWriteMu.Lock();defer wsWriteMu.Unlock();return c.WriteJSON(v)}
+
+func heartbeatLoop(c *http.Client,s,id,t string){for{if e:=sendHeartbeat(c,s,id,t);e!=nil{log.Printf("heartbeat failed: %v",e)};time.Sleep(30*time.Second)}}
+func sendHeartbeat(c *http.Client,s,id,t string)error{h,_:=os.Hostname();p:=heartbeat{h,readOSName(),version,privateIP(),desktopSession()};b,_:=json.Marshal(p);r,e:=http.NewRequest(http.MethodPost,s+"/api/remote/agent/heartbeat",bytes.NewReader(b));if e!=nil{return e};r.Header.Set("Content-Type","application/json");r.Header.Set("X-Agent-Id",id);r.Header.Set("X-Agent-Token",t);x,e:=c.Do(r);if e!=nil{return e};defer x.Body.Close();if x.StatusCode/100!=2{b,_:=io.ReadAll(io.LimitReader(x.Body,2048));return fmt.Errorf("server returned %s: %s",x.Status,strings.TrimSpace(string(b)))};return nil}
+func websocketURL(s string)string{if strings.HasPrefix(s,"https://"){return"wss://"+strings.TrimPrefix(s,"https://")};if strings.HasPrefix(s,"http://"){return"ws://"+strings.TrimPrefix(s,"http://")};return s}
+func readOSName()string{b,e:=os.ReadFile("/etc/os-release");if e!=nil{return runtime.GOOS};for _,l:=range strings.Split(string(b),"\n"){if strings.HasPrefix(l,"PRETTY_NAME="){return strings.Trim(strings.TrimPrefix(l,"PRETTY_NAME="),"\"")}};return runtime.GOOS}
+func privateIP()string{is,e:=net.Interfaces();if e!=nil{return""};for _,i:=range is{if i.Flags&net.FlagUp==0||i.Flags&net.FlagLoopback!=0{continue};as,_:=i.Addrs();for _,a:=range as{var p net.IP;switch v:=a.(type){case *net.IPNet:p=v.IP;case *net.IPAddr:p=v.IP};if p!=nil&&p.To4()!=nil&&p.IsPrivate(){return p.String()}}};return""}
+func desktopSession()string{if v:=strings.TrimSpace(os.Getenv("XDG_SESSION_TYPE"));v!=""{return v};if _,err:=exec.LookPath("loginctl");err!=nil{return"unknown"};out,err:=exec.Command("loginctl","list-sessions","--no-legend").Output();if err!=nil{return"unknown"};for _,line:=range strings.Split(string(out),"\n"){f:=strings.Fields(line);if len(f)==0{continue};kind,err:=exec.Command("loginctl","show-session",f[0],"-p","Type","--value").Output();if err!=nil{continue};v:=strings.TrimSpace(string(kind));if v=="wayland"||v=="x11"{return v}};return"none"}
+func shortID(v string)string{if len(v)>8{return v[:8]};return v}
