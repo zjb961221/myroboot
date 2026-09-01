@@ -99,7 +99,10 @@ public class RemoteDesktopService {
             params.put("enable-wallpaper", "true");
             params.put("enable-font-smoothing", "true");
             params.put("disable-audio", "false");
-            Map<String,Object> connection = Map.of("id", sessionId, "protocol", "rdp", "parameters", params);
+            // JSON auth connections are exposed by the unique key in the top-level
+            // "connections" object. The optional "id" field is only needed for
+            // sharing/shadowing and can interfere with normal ad-hoc connection lookup.
+            Map<String,Object> connection = Map.of("protocol", "rdp", "parameters", params);
             Map<String,Object> auth = new LinkedHashMap<>();
             auth.put("username", "myroboot-admin-" + admin.userId());
             auth.put("expires", Instant.now().plusSeconds(90).toEpochMilli());
