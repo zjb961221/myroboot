@@ -38,8 +38,12 @@ public class RemoteTerminalBroker {
     public boolean requestFileDownload(String requestId,String agentId,String path)throws IOException{return request(agentId,Map.of("type","file_download","requestId",requestId,"path",path));}
     public boolean requestFileUpload(String requestId,String agentId,String path,String data,boolean overwrite)throws IOException{return request(agentId,Map.of("type","file_upload","requestId",requestId,"path",path,"data",data,"overwrite",overwrite));}
     public boolean requestFileMkdir(String requestId,String agentId,String path)throws IOException{return request(agentId,Map.of("type","file_mkdir","requestId",requestId,"path",path));}
-    private boolean request(String agentId,Map<String,Object> payload)throws IOException{WebSocketSession a=agents.get(agentId);if(a==null||!a.isOpen())return false;send(a,payload);return true;}
 
+    public boolean openDesktopTunnel(String sessionId,String agentId,int port)throws IOException{return request(agentId,Map.of("type","desktop_tunnel_open","sessionId",sessionId,"port",port));}
+    public boolean sendDesktopData(String sessionId,String agentId,String data)throws IOException{return request(agentId,Map.of("type","desktop_tunnel_data","sessionId",sessionId,"data",data));}
+    public void closeDesktopTunnel(String sessionId,String agentId){try{request(agentId,Map.of("type","desktop_tunnel_close","sessionId",sessionId));}catch(Exception ignored){}}
+
+    private boolean request(String agentId,Map<String,Object> payload)throws IOException{WebSocketSession a=agents.get(agentId);if(a==null||!a.isOpen())return false;send(a,payload);return true;}
     private WebSocketSession agentFor(String id){String a=sessionAgents.get(id);return a==null?null:agents.get(a);}
     private void send(WebSocketSession session,Map<String,Object> payload)throws IOException{String json=mapper.writeValueAsString(payload);synchronized(session){if(session.isOpen())session.sendMessage(new TextMessage(json));}}
     private void closeQuietly(WebSocketSession session,CloseStatus status){try{session.close(status);}catch(Exception ignored){}}
