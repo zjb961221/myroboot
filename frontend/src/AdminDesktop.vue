@@ -16,12 +16,6 @@ const full = ref(false)
 const selected = computed(() => agents.value.find(a => Number(a.id) === Number(agentId.value)))
 
 function headers(extra={}) { return { ...extra, Authorization:`Bearer ${token}` } }
-function guacamoleClientId(connectionSessionId) {
-  return btoa(`${connectionSessionId}\0c\0json`)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '')
-}
 async function request(url, options={}) {
   options.headers = headers(options.headers || {})
   const res = await fetch(url, options)
@@ -47,10 +41,12 @@ async function openDesktop() {
       body:JSON.stringify({username:username.value.trim(), password:password.value, port:Number(port.value)})
     })
     sessionId.value = grant.sessionId
-    const clientId = guacamoleClientId(grant.sessionId)
-    frameUrl.value = `${grant.path}?data=${encodeURIComponent(grant.data)}#/client/${encodeURIComponent(clientId)}`
+    // JSON auth officially supports supplying encrypted data directly on any
+    // Guacamole page URL. Let Guacamole authenticate and resolve the exposed
+    // connection itself instead of guessing its internal /client identifier.
+    frameUrl.value = `${grant.path}?data=${encodeURIComponent(grant.data)}`
     password.value = ''
-    showToast('远程桌面隧道已建立，正在进入桌面', 'success')
+    showToast('远程桌面授权已建立，请在 Guacamole 中进入当前连接', 'success')
   } catch (e) { showToast(e.message) }
   finally { opening.value = false }
 }
@@ -107,7 +103,7 @@ onBeforeUnmount(() => closeDesktop(false))
     <label>GNOME Remote Desktop 密码<input v-model="password" type="password" autocomplete="new-password" placeholder="仅本次会话使用，不保存到数据库"></label>
     <div class="security">
       <strong>安全边界</strong>
-      <span>凭据只用于生成 90 秒有效的加密 Guacamole 授权，不写入 MYROBOOT 数据库；Agent 只允许连接本机 127.0.0.1 的 3389-3399 端口。</span>
+      <span>凭据只用于生成短时有效的加密 Guacamole 授权，不写入 MYROBOOT 数据库；Agent 只允许连接本机 127.0.0.1 的 3389-3399 端口。</span>
     </div>
     <button class="primary connect" :disabled="opening || !selected || Number(selected?.online)!==1" @click="openDesktop">{{opening?'正在建立安全隧道…':'连接远程桌面'}}</button>
     <p class="hint">Ubuntu 24.04：设置 → 系统 → 远程桌面 → 桌面共享，开启“桌面共享”和“远程控制”。如果同时启用了 Remote Login，桌面共享端口可能变为 3390。</p>
